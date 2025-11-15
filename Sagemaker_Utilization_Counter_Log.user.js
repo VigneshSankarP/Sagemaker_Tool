@@ -1,14 +1,17 @@
 // ==UserScript==
 // @name         SageMaker Utilization + Count
 // @namespace    http://tampermonkey.net/
-// @version      20.20-tasktime-sync-pause
+// @version      20.21
 // @description  Utilization timer + daily counter + full history + sessions + dashboard.
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
 // @grant        none
 // @noframes
 // @run-at       document-end
+// @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/Sagemaker_Utilization_Counter_Log.user.js
+// @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/Sagemaker_Utilization_Counter_Log.user.js
 // ==/UserScript==
+
 // @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker-Counter/main/Sagemaker_Utilization_Counter_Log.user.js
 // @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker-Counter/main/Sagemaker_Utilization_Counter_Log.user.js
 
