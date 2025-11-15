@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SageMaker Utilization + Count
 // @namespace    http://tampermonkey.net/
-// @version      20.15-tasktime-sync-pause
+// @version      20.20-tasktime-sync-pause
 // @description  Utilization timer + daily counter + full history + sessions + dashboard.
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
