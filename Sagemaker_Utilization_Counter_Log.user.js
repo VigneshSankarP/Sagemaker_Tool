@@ -1,19 +1,16 @@
 // ==UserScript==
-// @name         SageMaker Utilization + Count
+// @name         SageMaker Utilization + Count (Fast Start)
 // @namespace    http://tampermonkey.net/
-// @version      20.21
-// @description  Utilization timer + daily counter + full history + sessions + dashboard.
+// @version      20.25
+// @description  Utilization timer + daily counter + full history + sessions + dashboard. Fast-start Task time alignment.
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
 // @grant        none
 // @noframes
 // @run-at       document-end
-// @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/Sagemaker_Utilization_Counter_Log.user.js
-// @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/Sagemaker_Utilization_Counter_Log.user.js
-// ==/UserScript==
-
 // @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker-Counter/main/Sagemaker_Utilization_Counter_Log.user.js
 // @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker-Counter/main/Sagemaker_Utilization_Counter_Log.user.js
+// ==/UserScript==
 
 
 (function () {
@@ -23,7 +20,7 @@
   if (window.__SM_TIMER_RUNNING__) return;
   window.__SM_TIMER_RUNNING__ = true;
 
-  // Preserve original fetch for optional cloud sync, in case we later patch window.fetch
+  // Preserve original fetch for optional cloud sync
   const ORIGINAL_FETCH =
     typeof window.fetch === "function" ? window.fetch.bind(window) : null;
 
@@ -106,7 +103,6 @@
       return null;
     }
   }
-
 
   // ---------------- HELPERS ----------------
   const today = () => {
@@ -485,8 +481,6 @@
       // ignore DOM issues; we'll let isTaskActive() handle it later
     }
 
-    // offlineDelta removed; we now trust the on-page Task time label instead.
-
     // If the page is already expired, make sure we are rolled back and
     // mark the state as expired so this hit doesn't keep accumulating.
     if (expiredNow) {
@@ -496,7 +490,6 @@
       }
     }
   }
-
 
   function persistHitState(stateOverride) {
     const state = stateOverride || currentHitState || {};
@@ -639,7 +632,8 @@
     if (/release\s*task/.test(text) || /\bsubmit\b/.test(text)) return false;
 
     // Typical SageMaker landing text (adjust to your actual home page if needed)
-    if (/amazon sagemaker studio/.test(text) && /getting started/.test(text)) return true;
+    if (/amazon sagemaker studio/.test(text) && /getting started/.test(text))
+      return true;
     if (/welcome to amazon sagemaker/.test(text)) return true;
 
     // Treat very short paths as console/home (no extra segments)
@@ -649,14 +643,17 @@
     return false;
   }
 
-  // ---------------- TASK DETECTION (IMPROVED) ----------------
+  // ---------------- TASK DETECTION (RELAXED) ----------------
   function isTaskActive() {
-    const text = taskPageTextSnapshot();
-    if (!text) return false;
-    if (isHomePage()) return false;
+    // Home page is never active
+    if (typeof isHomePage === "function" && isHomePage()) return false;
 
-    // If we clearly see an "expired/failed" style message,
-    // treat the task as inactive, roll back current hit, and stop.
+    const text = taskPageTextSnapshot();
+    // While the page is still building and has no text yet,
+    // assume "probably active" (the timer loop will handle Task time).
+    if (!text) return true;
+
+    // If we clearly see an "expired/failed/time up" message → NOT active.
     if (taskMatchesAny(text, TASK_STOP_PATTERNS)) {
       if (typeof rollbackCurrentHit === "function" && totalMs !== committedMs) {
         rollbackCurrentHit("expired");
@@ -667,8 +664,8 @@
       return false;
     }
 
-    // Otherwise, it's active if any of the usual patterns is present
-    return taskMatchesAny(text, TASK_PATTERNS);
+    // Any non-home, non-expired page is treated as active.
+    return true;
   }
 
   // ---------------- TIMER ----------------
@@ -688,19 +685,37 @@
     }
 
     timerId = setInterval(() => {
-      if (!isTaskActive() || (typeof isHomePage === "function" && isHomePage())) {
+      // 1) Hard stop on home page
+      if (typeof isHomePage === "function" && isHomePage()) {
         stopTimer(false);
         return;
       }
-      const delta = 1000; // logical tick
-      const taskSec = getTaskTimeSecondsFromPage && getTaskTimeSecondsFromPage();
+
+      // 2) Hard stop if page shows expired/failed/time-up text
+      try {
+        const text = taskPageTextSnapshot ? taskPageTextSnapshot() : "";
+        if (text && taskMatchesAny && taskMatchesAny(text, TASK_STOP_PATTERNS)) {
+          if (typeof rollbackCurrentHit === "function" && totalMs !== committedMs) {
+            rollbackCurrentHit("expired");
+          }
+          if (typeof persistHitState === "function") {
+            persistHitState({ state: "expired" });
+          }
+          stopTimer(false);
+          return;
+        }
+      } catch (e) {
+        // ignore text inspection issues
+      }
+
+      // 3) Use Task time label as the only clock
+      const taskSec =
+        typeof getTaskTimeSecondsFromPage === "function"
+          ? getTaskTimeSecondsFromPage()
+          : null;
+
       if (typeof taskSec === "number" && taskSec >= 0) {
-        // We always start from the on-page Task time, but adjust out any
-        // "break" time that came from Stop & Resume clicks.
-        // If pauseTaskSec is set, this is the first tick after resuming
-        // from a pause. Compute how much of the Task time happened while
-        // we were paused (extraBreak), accumulate it into the break
-        // adjustment, then clear pauseTaskSec so we don't repeat it.
+        // Handle Stop & Resume adjustment
         if (pauseTaskSec !== null) {
           const extraBreak = taskSec - pauseTaskSec;
           if (extraBreak > 0) {
@@ -715,13 +730,19 @@
             });
           }
         }
-        const effectiveTaskSec = Math.max(0, taskSec - taskTimeBreakAdjustSec);
-        // Match the on-page "Task time" minus all pause/break segments.
+
+        const effectiveTaskSec = Math.max(
+          0,
+          taskSec - (taskTimeBreakAdjustSec || 0)
+        );
+
+        // Utilization = committed total + effective Task time
         totalMs = committedMs + effectiveTaskSec * 1000;
       } else {
-        // Fallback: only if no Task time label can be read.
-        totalMs += delta;
+        // No Task time label yet → do NOT advance utilization.
+        // Just keep the last value on screen.
       }
+
       render();
       if (typeof persistHitState === "function") {
         persistHitState();
@@ -1241,7 +1262,7 @@
         justify-content: flex-start;
       }
     }
-  
+
 /* --- Fix Reset Counter button layout --- */
 #sm-counter-header {
     display: flex !important;
@@ -1328,7 +1349,7 @@
         </div>
 
         <div class="sm-card">
-          
+
 <div class="sm-section-header" id="sm-counter-header">
     <div class="sm-section-header-main">
       <span>Assign-Counter History</span>
@@ -1935,17 +1956,21 @@
       const toVal = toEl.value;
       filteredEntries = applyDateFilter(allEntries, fromVal, toVal);
       utilPage = sessionsPage = counterPage = 1;
-      
-    // Reset Counter
-    document.getElementById("sm-reset-counter").addEventListener("click", () => {
-        if(confirm("Reset counter to zero?")){
-            localStorage.setItem("sm_count", "0");
-            localStorage.setItem("sm_last_reset", JSON.stringify(new Date().toISOString().split("T")[0]));
-            alert("Counter reset.");
-            location.reload();
+
+      // Reset Counter
+      document.getElementById("sm-reset-counter").addEventListener("click", () => {
+        if (confirm("Reset counter to zero?")) {
+          localStorage.setItem("sm_count", "0");
+          localStorage.setItem(
+            "sm_last_reset",
+            JSON.stringify(new Date().toISOString().split("T")[0])
+          );
+          alert("Counter reset.");
+          location.reload();
         }
-    });
-rerenderAll();
+      });
+
+      rerenderAll();
     });
 
     document.getElementById("sm-clear-filter").addEventListener("click", () => {
@@ -1963,15 +1988,25 @@ rerenderAll();
       rerenderAll();
     });
 
-    document.getElementById("sm-download-csv").addEventListener("click", openCsvModal);
-    document.getElementById("sm-csv-close").addEventListener("click", closeCsvModal);
-    document.getElementById("sm-csv-modal-backdrop").addEventListener("click", (e) => {
-      if (e.target && e.target.id === "sm-csv-modal-backdrop") {
-        closeCsvModal();
-      }
-    });
-    document.getElementById("sm-csv-preview-btn").addEventListener("click", previewCsvFromModal);
-    document.getElementById("sm-csv-download-btn").addEventListener("click", downloadCsvFromModal);
+    document
+      .getElementById("sm-download-csv")
+      .addEventListener("click", openCsvModal);
+    document
+      .getElementById("sm-csv-close")
+      .addEventListener("click", closeCsvModal);
+    document
+      .getElementById("sm-csv-modal-backdrop")
+      .addEventListener("click", (e) => {
+        if (e.target && e.target.id === "sm-csv-modal-backdrop") {
+          closeCsvModal();
+        }
+      });
+    document
+      .getElementById("sm-csv-preview-btn")
+      .addEventListener("click", previewCsvFromModal);
+    document
+      .getElementById("sm-csv-download-btn")
+      .addEventListener("click", downloadCsvFromModal);
 
     document.getElementById("sm-util-prev").addEventListener("click", () => {
       if (utilPage > 1) {
@@ -2028,7 +2063,6 @@ rerenderAll();
     openLogDashboard();
   });
 
-  
   // ===================================================================
   //            DAILY SUBMISSION COUNTER (IMPROVED, SHARED FOOTER)
   // ===================================================================
@@ -2225,7 +2259,7 @@ rerenderAll();
     });
   })();
 
-// ---------------- INIT TIMER ----------------
+  // ---------------- INIT TIMER ----------------
   function initTimer() {
     committedMs = loadToday();
     totalMs = committedMs;
@@ -2242,7 +2276,8 @@ rerenderAll();
         saveCurrentHit(null);
         return;
       }
-      isTaskActive() ? startTimer() : stopTimer(false);
+      // Always start on non-home pages; loop itself will stop on expired/home
+      startTimer();
     }, 500);
   }
 
