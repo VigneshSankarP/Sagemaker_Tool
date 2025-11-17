@@ -1,0 +1,888 @@
+// ==UserScript==
+// @name         SageMaker Utilization + Count
+// @namespace    http://tampermonkey.net/
+// @version      33.3
+// @description  Timer/Counter working - Dashboard fixed with error handling
+// @author       PVSANKAR
+// @match        *://*.sagemaker.aws/*
+// @grant        none
+// @noframes
+// @run-at       document-end
+// @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/sagemaker-tool.user.js
+// @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/sagemaker-tool.user.js
+// ==/UserScript==
+
+(function () {
+  "use strict";
+
+  if (window.__SM_TIMER_RUNNING__) return;
+  window.__SM_TIMER_RUNNING__ = true;
+
+  // ============================================================================
+  //                    CONFIG
+  // ============================================================================
+
+  const CONFIG = {
+    CHECK_INTERVAL_MS: 1000,
+    DAILY_ALERT_HOURS: 8,
+    MAX_HISTORY_DAYS: 30,
+    DEBUG: false,
+  };
+
+  const KEYS = {
+    DAILY_COMMITTED: "sm_daily_committed",
+    ACTIVE_TASKS: "sm_active_tasks",
+    LAST_DATE: "sm_last_date",
+    HISTORY: "sm_history",
+    COUNT: "sm_count",
+    LAST_RESET: "sm_last_reset",
+  };
+
+  const FOOTER_SELECTORS = ".cswui-footer, .awsui-footer, #footer-root, .awsui-util-pv-xs.cswui-footer";
+
+  // ============================================================================
+  //                           HELPER FUNCTIONS
+  // ============================================================================
+
+  const today = () => new Date().toISOString().split("T")[0];
+
+  const fmt = (seconds) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return [h, m, s].map(n => String(n).padStart(2, "0")).join(":");
+  };
+
+  function log(...args) {
+    if (CONFIG.DEBUG) {
+      console.log(`[SM]`, ...args);
+    }
+  }
+
+  function store(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {}
+  }
+
+  function retrieve(key, fallback = null) {
+    try {
+      const val = localStorage.getItem(key);
+      return val ? JSON.parse(val) : fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function getTaskIdentifier() {
+    return window.location.pathname + window.location.search;
+  }
+
+  // ============================================================================
+  //                        READ AWS TIMER
+  // ============================================================================
+
+  function parseAWSTimer() {
+    try {
+      const bodyText = document.body.innerText || document.body.textContent || "";
+
+      const match = bodyText.match(/Task time:\s*(\d+):(\d+)\s+of\s+(\d+)\s*Min\s+(\d+)\s*Sec/i);
+      if (match) {
+        const currentMin = parseInt(match[1], 10);
+        const currentSec = parseInt(match[2], 10);
+        const limitMin = parseInt(match[3], 10);
+        const limitSec = parseInt(match[4], 10);
+
+        if (!isNaN(currentMin) && !isNaN(currentSec) && !isNaN(limitMin) && !isNaN(limitSec)) {
+          return {
+            current: currentMin * 60 + currentSec,
+            limit: limitMin * 60 + limitSec,
+            remaining: (limitMin * 60 + limitSec) - (currentMin * 60 + currentSec),
+          };
+        }
+      }
+
+      const match2 = bodyText.match(/Task time:\s*(\d+):(\d+)/i);
+      if (match2) {
+        const minutes = parseInt(match2[1], 10);
+        const seconds = parseInt(match2[2], 10);
+        if (!isNaN(minutes) && !isNaN(seconds)) {
+          return {
+            current: minutes * 60 + seconds,
+            limit: 3600,
+            remaining: 3600 - (minutes * 60 + seconds),
+          };
+        }
+      }
+
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function hasTaskExpired() {
+    try {
+      const text = (document.body.innerText || "").toLowerCase();
+      return (
+        text.includes("task has expired") ||
+        text.includes("task expired") ||
+        text.includes("time is up") ||
+        text.includes("time limit")
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // ============================================================================
+  //                        TASK MANAGEMENT (DON'T TOUCH - WORKING)
+  // ============================================================================
+
+  function getActiveTasks() {
+    return retrieve(KEYS.ACTIVE_TASKS, {});
+  }
+
+  function saveActiveTasks(tasks) {
+    store(KEYS.ACTIVE_TASKS, tasks);
+  }
+
+  function createOrUpdateTask(taskId, awsData) {
+    const tasks = getActiveTasks();
+    const now = Date.now();
+
+    if (!tasks[taskId]) {
+      tasks[taskId] = {
+        taskId,
+        startTimestamp: now,
+        lastSeenTimestamp: now,
+        baselineAWSTime: awsData.current,
+        limitSeconds: awsData.limit,
+        expiresAt: now + awsData.remaining * 1000,
+        isPaused: false,
+        frozenPendingSeconds: 0,
+        pausedAtAWSTime: null,
+        wasOpenedAfterCreation: true,
+        status: "active",
+      };
+      log(`New hit started: ${taskId}`);
+    } else {
+      const task = tasks[taskId];
+      task.wasOpenedAfterCreation = true;
+      task.lastSeenTimestamp = now;
+
+      if (task.status === "active") {
+        if (task.isPaused && awsData.current > task.pausedAtAWSTime) {
+          task.baselineAWSTime = awsData.current - task.frozenPendingSeconds;
+          task.isPaused = false;
+          task.pausedAtAWSTime = null;
+          log(`Hit RESUMED from ${fmt(task.frozenPendingSeconds)}`);
+        }
+        task.expiresAt = now + awsData.remaining * 1000;
+      }
+    }
+
+    saveActiveTasks(tasks);
+    return tasks[taskId];
+  }
+
+  function pauseTask(taskId, currentAWSTime) {
+    const tasks = getActiveTasks();
+    const task = tasks[taskId];
+
+    if (!task || task.isPaused) return;
+
+    const currentPending = currentAWSTime - task.baselineAWSTime;
+    task.isPaused = true;
+    task.pausedAtAWSTime = currentAWSTime;
+    task.frozenPendingSeconds = Math.max(0, currentPending);
+
+    saveActiveTasks(tasks);
+    log(`Hit PAUSED at ${fmt(task.frozenPendingSeconds)} - TIMER STOPPED`);
+  }
+
+  function getCurrentPendingSeconds(task, awsData) {
+    if (!task) return 0;
+
+    if (task.isPaused) {
+      return task.frozenPendingSeconds;
+    } else {
+      if (!awsData) return task.frozenPendingSeconds || 0;
+      return Math.max(0, awsData.current - task.baselineAWSTime);
+    }
+  }
+
+  function commitTask(taskId) {
+    const tasks = getActiveTasks();
+    const task = tasks[taskId];
+
+    if (!task) {
+      log(`Cannot commit - task not found: ${taskId}`);
+      return 0;
+    }
+
+    const now = Date.now();
+
+    if (now > task.expiresAt) {
+      if (!task.wasOpenedAfterCreation) {
+        log(`Cannot commit - expired and not reopened: ${taskId} - DISCARDING`);
+        delete tasks[taskId];
+        saveActiveTasks(tasks);
+        return 0;
+      }
+    }
+
+    const awsData = parseAWSTimer();
+    const finalPending = getCurrentPendingSeconds(task, awsData);
+
+    if (finalPending <= 0) {
+      log(`Cannot commit - no time: ${taskId}`);
+      delete tasks[taskId];
+      saveActiveTasks(tasks);
+      return 0;
+    }
+
+    const committed = retrieve(KEYS.DAILY_COMMITTED, 0);
+    const newTotal = committed + finalPending;
+
+    store(KEYS.DAILY_COMMITTED, newTotal);
+    saveToHistory(today(), newTotal);
+    checkDailyAlert(newTotal);
+
+    log(`Hit COMMITTED: ${fmt(finalPending)}, total: ${fmt(newTotal)}`);
+
+    delete tasks[taskId];
+    saveActiveTasks(tasks);
+
+    return finalPending;
+  }
+
+  function discardTask(taskId, reason) {
+    const tasks = getActiveTasks();
+    const task = tasks[taskId];
+
+    if (!task) return;
+
+    log(`Hit DISCARDED: ${reason} - returning to last committed time`);
+
+    delete tasks[taskId];
+    saveActiveTasks(tasks);
+  }
+
+  function cleanupExpiredTasks() {
+    const tasks = getActiveTasks();
+    const now = Date.now();
+    let cleaned = false;
+
+    for (const taskId in tasks) {
+      const task = tasks[taskId];
+
+      if (now > task.expiresAt) {
+        if (!task.wasOpenedAfterCreation) {
+          log(`Cleaning expired hit (not reopened) - DISCARDING`);
+          delete tasks[taskId];
+          cleaned = true;
+        }
+      }
+    }
+
+    if (cleaned) {
+      saveActiveTasks(tasks);
+    }
+  }
+
+  function markTaskAsBackgrounded(taskId) {
+    const tasks = getActiveTasks();
+    const task = tasks[taskId];
+
+    if (task) {
+      task.wasOpenedAfterCreation = false;
+      saveActiveTasks(tasks);
+      log(`Hit backgrounded`);
+    }
+  }
+
+  function checkDailyReset() {
+    const currentDate = today();
+    const lastDate = retrieve(KEYS.LAST_DATE);
+
+    if (lastDate !== currentDate) {
+      store(KEYS.LAST_DATE, currentDate);
+      store(KEYS.DAILY_COMMITTED, 0);
+      store(KEYS.COUNT, 0);
+      store(KEYS.LAST_RESET, currentDate);
+      store(KEYS.ACTIVE_TASKS, {});
+      return 0;
+    }
+
+    return retrieve(KEYS.DAILY_COMMITTED, 0);
+  }
+
+  function saveToHistory(dateStr, totalSeconds) {
+    const history = retrieve(KEYS.HISTORY, {});
+    history[dateStr] = totalSeconds;
+
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - CONFIG.MAX_HISTORY_DAYS);
+    const cutoffStr = cutoffDate.toISOString().split("T")[0];
+
+    for (const date in history) {
+      if (date < cutoffStr) delete history[date];
+    }
+
+    store(KEYS.HISTORY, history);
+  }
+
+  function checkDailyAlert(totalSeconds) {
+    if (!CONFIG.DAILY_ALERT_HOURS || CONFIG.DAILY_ALERT_HOURS <= 0) return;
+
+    const threshold = CONFIG.DAILY_ALERT_HOURS * 3600;
+    const dateKey = today();
+    const alertKey = `sm_alert_${dateKey}`;
+
+    if (totalSeconds >= threshold && !sessionStorage.getItem(alertKey)) {
+      sessionStorage.setItem(alertKey, "1");
+      alert(`✅ You've reached ${CONFIG.DAILY_ALERT_HOURS} hours today!`);
+    }
+  }
+
+  // ============================================================================
+  //                          SUBMISSION COUNTER (DON'T TOUCH - WORKING)
+  // ============================================================================
+
+  function initCounter() {
+    let count = retrieve(KEYS.COUNT, 0);
+
+    function increment() {
+      count++;
+      store(KEYS.COUNT, count);
+      updateDisplay();
+    }
+
+    if (typeof window.fetch === "function") {
+      const originalFetch = window.fetch;
+      window.fetch = function (...args) {
+        const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
+        const method = args[1]?.method || "GET";
+
+        return originalFetch.apply(this, args).then((response) => {
+          if (
+            method.toUpperCase() === "POST" &&
+            response.ok &&
+            /submit|complete|finish/i.test(url)
+          ) {
+            commitTask(getTaskIdentifier());
+            increment();
+          }
+          return response;
+        });
+      };
+    }
+
+    if (typeof XMLHttpRequest !== "undefined") {
+      const originalOpen = XMLHttpRequest.prototype.open;
+      const originalSend = XMLHttpRequest.prototype.send;
+      const meta = new WeakMap();
+
+      XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+        meta.set(this, { method, url });
+        return originalOpen.call(this, method, url, ...rest);
+      };
+
+      XMLHttpRequest.prototype.send = function (body) {
+        this.addEventListener("loadend", function () {
+          const info = meta.get(this);
+          if (
+            info &&
+            info.method.toUpperCase() === "POST" &&
+            this.status >= 200 &&
+            this.status < 300 &&
+            /submit|complete|finish/i.test(info.url)
+          ) {
+            commitTask(getTaskIdentifier());
+            increment();
+          }
+        });
+        return originalSend.call(this, body);
+      };
+    }
+
+    return count;
+  }
+
+  // ============================================================================
+  //                          TRACKING LOOP (DON'T TOUCH - WORKING)
+  // ============================================================================
+
+  let currentTaskId = null;
+
+  function trackUtilization() {
+    cleanupExpiredTasks();
+
+    const taskId = getTaskIdentifier();
+    const awsData = parseAWSTimer();
+
+    if (!awsData || hasTaskExpired()) {
+      currentTaskId = null;
+      return;
+    }
+
+    currentTaskId = taskId;
+    createOrUpdateTask(taskId, awsData);
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && currentTaskId) {
+      markTaskAsBackgrounded(currentTaskId);
+    }
+  });
+
+  window.addEventListener("beforeunload", () => {
+    if (currentTaskId) {
+      markTaskAsBackgrounded(currentTaskId);
+    }
+  });
+
+  // ============================================================================
+  //                          BUTTON DETECTION (DON'T TOUCH - WORKING)
+  // ============================================================================
+
+  function wireTaskActionButtons() {
+    const selector = 'button, [role="button"], input[type="button"], input[type="submit"]';
+    const btns = document.querySelectorAll(selector);
+
+    btns.forEach((el) => {
+      const raw = (el.innerText || el.value || "").trim().toLowerCase();
+      if (!raw) return;
+
+      const taskId = getTaskIdentifier();
+
+      if ((raw.includes("stop") && raw.includes("resume")) && !el.__sm_pause_bound) {
+        el.__sm_pause_bound = true;
+        el.addEventListener("click", () => {
+          const awsData = parseAWSTimer();
+          if (awsData) {
+            pauseTask(taskId, awsData.current);
+            updateDisplay();
+          }
+        });
+      }
+
+      if ((raw.includes("release") || raw.includes("decline")) && !el.__sm_discard_bound) {
+        el.__sm_discard_bound = true;
+        el.addEventListener("click", () => {
+          discardTask(taskId, "released");
+          updateDisplay();
+        });
+      }
+
+      if ((raw.includes("submit") || raw.includes("complete")) && !el.__sm_submit_bound) {
+        el.__sm_submit_bound = true;
+        el.addEventListener("click", () => {
+          commitTask(taskId);
+          updateDisplay();
+        });
+      }
+
+      if (raw.includes("skip") && !el.__sm_skip_bound) {
+        el.__sm_skip_bound = true;
+        el.addEventListener("click", () => {
+          discardTask(taskId, "skipped");
+          updateDisplay();
+        });
+      }
+    });
+  }
+
+  new MutationObserver(wireTaskActionButtons).observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+
+  // ============================================================================
+  //              FOOTER DISPLAY (DON'T TOUCH - WORKING)
+  // ============================================================================
+
+  const display = document.createElement("div");
+  display.id = "sm-utilization";
+  Object.assign(display.style, {
+    position: "absolute",
+    left: "12px",
+    top: "50%",
+    transform: "translateY(-50%)",
+    color: "inherit",
+    fontSize: "inherit",
+    fontFamily: "inherit",
+    opacity: "0.88",
+    pointerEvents: "auto",
+    userSelect: "none",
+    whiteSpace: "nowrap",
+    display: "flex",
+    alignItems: "center",
+    gap: "0px",
+  });
+
+  const utilText = document.createTextNode("Utilization: 00:00:00");
+  display.appendChild(utilText);
+
+  const countLabel = document.createElement("span");
+  countLabel.textContent = " | Count: 0";
+  display.appendChild(countLabel);
+
+  const logBtn = document.createElement("span");
+  logBtn.textContent = " | View Log";
+  Object.assign(logBtn.style, {
+    cursor: "pointer",
+    opacity: "0.85",
+    marginLeft: "0px",
+  });
+  logBtn.onmouseenter = () => (logBtn.style.opacity = "1");
+  logBtn.onmouseleave = () => (logBtn.style.opacity = "0.85");
+  logBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    console.log("[SM] View Log clicked");
+    try {
+      openDashboard();
+    } catch (err) {
+      console.error("[SM] Dashboard error:", err);
+      alert("Error opening dashboard: " + err.message);
+    }
+  });
+  display.appendChild(logBtn);
+
+  function updateDisplay() {
+    cleanupExpiredTasks();
+
+    const committed = retrieve(KEYS.DAILY_COMMITTED, 0);
+    const tasks = getActiveTasks();
+    const awsData = parseAWSTimer();
+
+    let totalPending = 0;
+    for (const taskId in tasks) {
+      const task = tasks[taskId];
+      if (task.status === "active") {
+        totalPending += getCurrentPendingSeconds(task, awsData);
+      }
+    }
+
+    const total = committed + totalPending;
+
+    utilText.nodeValue = `Utilization: ${fmt(total)}`;
+    countLabel.textContent = ` | Count: ${retrieve(KEYS.COUNT, 0)}`;
+  }
+
+  function attachToFooter() {
+    const footer = document.querySelector(FOOTER_SELECTORS);
+    if (!footer) return;
+
+    if (getComputedStyle(footer).position === "static") {
+      footer.style.position = "relative";
+    }
+
+    const dups = footer.querySelectorAll("#sm-utilization");
+    if (dups.length > 1) {
+      for (let i = 1; i < dups.length; i++) dups[i].remove();
+    }
+
+    if (!footer.contains(display)) {
+      footer.appendChild(display);
+    }
+  }
+
+  let footerAttachTimer = null;
+  function debouncedAttachToFooter() {
+    clearTimeout(footerAttachTimer);
+    footerAttachTimer = setTimeout(attachToFooter, 100);
+  }
+
+  new MutationObserver(debouncedAttachToFooter).observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+
+  // ============================================================================
+  //                  LOG PAGE (DASHBOARD) - FIXED WITH ERROR HANDLING
+  // ============================================================================
+
+  function openDashboard() {
+    console.log("[SM] Opening dashboard...");
+
+    cleanupExpiredTasks();
+
+    const committed = retrieve(KEYS.DAILY_COMMITTED, 0);
+    const tasks = getActiveTasks();
+    const history = retrieve(KEYS.HISTORY, {});
+    const count = retrieve(KEYS.COUNT, 0);
+    const lastReset = retrieve(KEYS.LAST_RESET, "Unknown");
+    const awsData = parseAWSTimer();
+
+    let totalPending = 0;
+    let activeTasksInfo = "";
+
+    for (const taskId in tasks) {
+      const task = tasks[taskId];
+      if (task.status === "active") {
+        const pending = getCurrentPendingSeconds(task, awsData);
+        totalPending += pending;
+        const status = task.isPaused ? "⏸️ PAUSED" : (task.wasOpenedAfterCreation ? "▶️ RUNNING" : "🔄 BACKGROUND");
+        activeTasksInfo += `<tr><td style="font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;">${taskId}</td><td>${status}</td><td>${fmt(pending)}</td></tr>`;
+      }
+    }
+
+    const entries = Object.entries(history)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, seconds]) => `<tr><td>${date}</td><td>${fmt(seconds)}</td></tr>`)
+      .join("");
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SageMaker Utilization Log</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f9;
+    }
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+    h1 {
+      margin-top: 0;
+      color: #232f3e;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin: 24px 0;
+    }
+    .stat-card {
+      padding: 18px;
+      background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+      border-radius: 8px;
+      border-left: 4px solid #ff9900;
+    }
+    .stat-label {
+      font-size: 13px;
+      color: #5a6c7d;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+    }
+    .stat-value {
+      font-size: 26px;
+      font-weight: 700;
+      color: #232f3e;
+      font-family: monospace;
+    }
+    h2 {
+      margin-top: 32px;
+      color: #232f3e;
+      font-size: 20px;
+      border-bottom: 2px solid #ff9900;
+      padding-bottom: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+    }
+    th, td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid #e9ecef;
+    }
+    th {
+      background: #f8f9fa;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    td {
+      font-family: monospace;
+      font-size: 14px;
+    }
+    button {
+      padding: 10px 20px;
+      background: #ff9900;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-top: 20px;
+      margin-right: 10px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    button:hover {
+      background: #ec7211;
+    }
+    button:active {
+      transform: scale(0.98);
+    }
+    button.danger {
+      background: #d13212;
+    }
+    button.danger:hover {
+      background: #b92d0f;
+    }
+    .button-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📊 SageMaker Utilization Log</h1>
+
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-label">Today's Utilization</div>
+        <div class="stat-value">${fmt(committed + totalPending)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Submissions</div>
+        <div class="stat-value">${count}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Last Reset</div>
+        <div class="stat-value" style="font-size:16px;">${lastReset}</div>
+      </div>
+    </div>
+
+    ${activeTasksInfo ? `
+    <h2>🔄 Active Tasks</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Task ID</th>
+          <th>Status</th>
+          <th>Time</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${activeTasksInfo}
+      </tbody>
+    </table>
+    ` : ''}
+
+    <h2>📅 History (Last ${CONFIG.MAX_HISTORY_DAYS} Days)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Utilization</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${entries || '<tr><td colspan="2" style="text-align:center;padding:40px;color:#999;">No history yet</td></tr>'}
+      </tbody>
+    </table>
+
+    <div class="button-group">
+      <button onclick="location.reload()">🔄 Refresh</button>
+      <button class="danger" id="resetBtn">🗑️ Reset Counter</button>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      console.log('[Dashboard] Script executing...');
+
+      var btn = document.getElementById('resetBtn');
+      if (!btn) {
+        console.error('[Dashboard] Reset button not found!');
+        return;
+      }
+
+      btn.addEventListener('click', function() {
+        console.log('[Dashboard] Reset button clicked');
+
+        if (!confirm('Are you sure you want to reset the counter to 0?')) {
+          console.log('[Dashboard] Reset cancelled');
+          return;
+        }
+
+        try {
+          var today = new Date().toISOString().split('T')[0];
+          localStorage.setItem('sm_count', JSON.stringify(0));
+          localStorage.setItem('sm_last_reset', JSON.stringify(today));
+
+          console.log('[Dashboard] Counter reset successfully');
+          alert('✅ Counter reset to 0!');
+
+          setTimeout(function() {
+            window.close();
+          }, 500);
+        } catch (e) {
+          console.error('[Dashboard] Reset error:', e);
+          alert('❌ Error: ' + e.message);
+        }
+      });
+
+      console.log('[Dashboard] Loaded successfully');
+    })();
+  </script>
+</body>
+</html>
+`;
+
+    const win = window.open("", "_blank", "width=1000,height=800");
+
+    if (!win) {
+      console.error("[SM] Popup blocked!");
+      alert("❌ Popup blocked! Please allow popups for this site and try again.");
+      return;
+    }
+
+    try {
+      win.document.open();
+      win.document.write(htmlContent);
+      win.document.close();
+      console.log("[SM] Dashboard opened successfully");
+    } catch (err) {
+      console.error("[SM] Error writing to popup:", err);
+      alert("Error opening dashboard: " + err.message);
+    }
+  }
+
+  // ============================================================================
+  //          CROSS-WINDOW SYNC - FIXES RESET BUTTON
+  // ============================================================================
+
+  window.addEventListener('storage', function(e) {
+    if (e.key === KEYS.COUNT || e.key === KEYS.LAST_RESET) {
+      log(`Storage updated from another window: ${e.key}`);
+      updateDisplay();
+    }
+  });
+
+  // ============================================================================
+  //                          INITIALIZATION (DON'T TOUCH - WORKING)
+  // ============================================================================
+
+  initCounter();
+
+  setInterval(() => {
+    checkDailyReset();
+    trackUtilization();
+    updateDisplay();
+  }, CONFIG.CHECK_INTERVAL_MS);
+
+  setInterval(cleanupExpiredTasks, 30000);
+
+  attachToFooter();
+  wireTaskActionButtons();
+  updateDisplay();
+
+  log(`✅ Tracker initialized`);
+})();
