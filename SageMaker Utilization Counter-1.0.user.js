@@ -7,9 +7,6 @@
 // @match        *://*.sagemaker.aws/*
 // @grant        none
 
-// @updateURL   https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker_Utilization_Counter.user.js
-// @downloadURL https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker_Utilization_Counter.user.js
-
 // ==/UserScript==
 
 
