@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         SageMaker Smart-Play
 // @namespace    http://tampermonkey.net/
-// @version      10.0
-// @description  Smart-play visible videos + AWS-themed toggle UI in MTurk footer.
+// @version      10.1
+// @description  Smart-play visible videos + AWS-themed small toggle UI in MTurk footer.
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
 // @match        https://mturk-console-template-preview-hooks.s3.amazonaws.com/*
-// @updateURL   https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/smk-smartplay.user.js
-// @downloadURL https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/smk-smartplay.user.js
+// @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/smk-smartplay.user.js
+// @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/smk-smartplay.user.js
 // @all-frames   true
 // @run-at       document-end
 // @grant        none
@@ -51,7 +51,7 @@
     });
 
 
-    /* ---------------- Insert NEW AWS-style Smart-Play toggle ---------------- */
+    /* ---------------- Insert NEW Small AWS-style Smart-Play toggle ---------------- */
     function insertSwitchInFooter() {
 
         const footerText = document.querySelector(
@@ -70,7 +70,6 @@
         const wrap = document.createElement('div');
         wrap.id = BTN_ID;
 
-        /* AWS-THEMED A2 UI */
         wrap.innerHTML = `
         <style>
 
@@ -79,38 +78,36 @@
                 align-items:center;
                 cursor:pointer;
                 font-family:sans-serif;
-                font-size:13px;
-                margin-left:12px;
+                font-size:12px;
+                margin-left:8px;
                 user-select:none;
             }
 
             .smart-label {
-                margin-right:10px;
+                margin-right:6px;
                 color:#1a1a1a;
             }
 
-            /* Track OFF = light grey (#c7c7c7)
-               Track ON  = AWS slate grey (#4a5a66) */
+            /* SMALL AWS toggle */
             .smart-track {
-                width:48px;
-                height:24px;
+                width:36px;
+                height:18px;
                 background:${getPersisted() ? "#4a5a66" : "#c7c7c7"};
-                border-radius:30px;
+                border-radius:18px;
                 position:relative;
                 transition:background 0.25s;
             }
 
-            /* Knob OFF = white, ON = AWS pale slate */
             .smart-knob {
-                width:22px;
-                height:22px;
+                width:16px;
+                height:16px;
                 background:${getPersisted() ? "#9fb5c1" : "#ffffff"};
                 border-radius:50%;
                 position:absolute;
                 top:1px;
-                left:${getPersisted() ? "25px" : "1px"};
+                left:${getPersisted() ? "19px" : "1px"};
                 transition:left .25s, background .25s;
-                box-shadow:0 1px 3px rgba(0,0,0,0.3);
+                box-shadow:0 1px 2px rgba(0,0,0,0.25);
             }
 
         </style>
@@ -131,9 +128,8 @@
             setPersisted(next);
             window.__SMK_AP_ON = next;
 
-            // Update AWS colors
             track.style.background = next ? "#4a5a66" : "#c7c7c7";
-            knob.style.left = next ? "25px" : "1px";
+            knob.style.left = next ? "19px" : "1px";
             knob.style.background = next ? "#9fb5c1" : "#ffffff";
 
             postState(next);
