@@ -6,7 +6,8 @@
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
 // @grant        none
-
+// @updateURL   https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.0.user.js
+// @downloadURL https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.0.user.js
 // ==/UserScript==
 
 
