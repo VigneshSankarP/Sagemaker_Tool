@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SageMaker Utilization Counter
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  AI-Enhanced SageMaker Utilization + Count Tracker
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
