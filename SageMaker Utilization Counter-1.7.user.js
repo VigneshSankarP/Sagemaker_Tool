@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         SageMaker Utilization Counter - Dashboard (AWS-style D1)
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  AWS-accurate Utilization + Professional Dashboard (Overview / Charts / Task Log) + Compatibility Shield - PVSANKAR
+// @version      1.7
+// @description  AWS-accurate + Midnight Reset + Dashboard Reset Only - PVSANKAR
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
 // @grant        none
-// @updateURL   https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.3.user.js
-// @downloadURL https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.3.user.js
+// @updateURL   https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.7.user.js
+// @downloadURL https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.7.user.js
 // ==/UserScript==
 
 (function () {
@@ -24,7 +24,7 @@
     DAILY_ALERT_HOURS: 8,
     MAX_HISTORY_DAYS: 30,
     DEBUG: false,
-    SESSIONS_LIMIT: 2000, // max number of stored session records
+    SESSIONS_LIMIT: 2000,
   };
 
   function log(...args) { if (CONFIG.DEBUG) console.log("[SM]", ...args); }
@@ -38,8 +38,9 @@
     HISTORY: "sm_history",
     COUNT: "sm_count",
     LAST_RESET: "sm_last_reset",
-    IGNORE_TASK: "sm_ignore_task",      // sessionStorage
-    SESSIONS: "sm_sessions"             // per-task session summaries
+    IGNORE_TASK: "sm_ignore_task",
+    SESSIONS: "sm_sessions",
+    LAST_MIDNIGHT_CHECK: "sm_last_midnight_check"
   };
 
   // ============================================================================
@@ -75,11 +76,9 @@
   // TASK PAGE DETECTION
   // ============================================================================
   function isTaskPage() {
-    // Check if we're on a task page by looking for task-related patterns
     const url = window.location.href.toLowerCase();
     const path = window.location.pathname.toLowerCase();
 
-    // Check for common task page indicators
     if (url.includes('/task') ||
         url.includes('/labeling') ||
         url.includes('/annotation') ||
@@ -88,13 +87,11 @@
       return true;
     }
 
-    // Check if AWS timer is present on the page
     const awsTimer = parseAWSTimer();
     if (awsTimer) {
       return true;
     }
 
-    // Check for task-related text content
     const bodyText = (document.body.innerText || "").toLowerCase();
     if (bodyText.includes("task time") &&
         (bodyText.includes("submit") || bodyText.includes("complete"))) {
@@ -165,7 +162,7 @@
   }
 
   // ============================================================================
-  // IN-MEMORY ACTIVE TASK (no per-second storage)
+  // IN-MEMORY ACTIVE TASK
   // ============================================================================
   let activeTask = null;
   function getTaskIdFromUrl() { return window.location.pathname + window.location.search; }
@@ -192,12 +189,12 @@
   }
 
   // ============================================================================
-  // SESSIONS STORAGE (safe per-task summaries)
+  // SESSIONS STORAGE
   // ============================================================================
   function pushSessionRecord(rec) {
     try {
       const sessions = retrieve(KEYS.SESSIONS, []) || [];
-      sessions.unshift(rec); // newest first
+      sessions.unshift(rec);
       if (sessions.length > CONFIG.SESSIONS_LIMIT) sessions.length = CONFIG.SESSIONS_LIMIT;
       store(KEYS.SESSIONS, sessions);
     } catch (e) { log("pushSession err", e); }
@@ -210,12 +207,14 @@
     const currentDate = todayStr();
     const lastDate = retrieve(KEYS.LAST_DATE);
     if (lastDate !== currentDate) {
-      log("New day - resetting");
-      store(KEYS.LAST_DATE, currentDate);
-      store(KEYS.DAILY_COMMITTED, 0);
-      store(KEYS.COUNT, 0);
-      store(KEYS.LAST_RESET, currentDate);
-      setIgnoreTask(null);
+      log("New day detected - resetting");
+      const previousTotal = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+
+      if (previousTotal > 0 && lastDate) {
+        saveToHistory(lastDate, previousTotal);
+      }
+
+      performReset("both", "auto");
       return 0;
     }
     return retrieve(KEYS.DAILY_COMMITTED, 0);
@@ -241,7 +240,251 @@
   }
 
   // ============================================================================
-  // COMMIT & DISCARD (safe summary recording)
+  // RESET FUNCTION (Selective reset options) - FIXED
+  // ============================================================================
+  function performReset(resetType = "both", source = "manual") {
+    const currentDate = todayStr();
+    const previousTimer = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+    const previousCount = retrieve(KEYS.COUNT, 0) || 0;
+
+    // Save previous day's data to history if it's a new day
+    if (source === "auto" || source === "midnight") {
+      const lastDate = retrieve(KEYS.LAST_DATE);
+      if (previousTimer > 0 && lastDate && lastDate !== currentDate) {
+        saveToHistory(lastDate, previousTimer);
+      }
+    }
+
+    let resetMessage = "";
+
+    // Reset based on type
+    switch(resetType) {
+      case "timer":
+        store(KEYS.DAILY_COMMITTED, 0);
+        resetMessage = `Timer reset: ${fmt(previousTimer)} → 00:00:00`;
+        log(`🔄 Timer reset. Previous: ${fmt(previousTimer)}`);
+        break;
+
+      case "counter":
+        store(KEYS.COUNT, 0);
+        resetMessage = `Counter reset: ${previousCount} → 0`;
+        log(`🔄 Counter reset. Previous: ${previousCount}`);
+        break;
+
+      case "both":
+      default:
+        store(KEYS.DAILY_COMMITTED, 0);
+        store(KEYS.COUNT, 0);
+        resetMessage = `Both reset: ${fmt(previousTimer)} & ${previousCount} → 00:00:00 & 0`;
+        log(`🔄 Both reset. Timer: ${fmt(previousTimer)}, Counter: ${previousCount}`);
+        break;
+    }
+
+    // Update date and reset time
+    store(KEYS.LAST_DATE, currentDate);
+    store(KEYS.LAST_RESET, new Date().toISOString());
+
+    // For full reset or auto reset, also clear ignore and discard active task
+    if (resetType === "both" || source === "auto" || source === "midnight") {
+      setIgnoreTask(null);
+
+      if (activeTask) {
+        pushSessionRecord({
+          id: activeTask.id,
+          date: new Date().toISOString(),
+          duration: activeTask.awsCurrent || 0,
+          action: source === "manual" ? `manual_reset_${resetType}` : "midnight_reset"
+        });
+        activeTask = null;
+        log(`Active task discarded due to ${source} reset`);
+      }
+    }
+
+    // Update UI
+    updateDisplay();
+    const root = document.getElementById("sm-dashboard-root");
+    if (root && root.style.display === "flex") updateDashboard();
+
+    // Show notification for manual resets
+    if (source === "manual") {
+      showResetNotification(resetMessage);
+    }
+
+    return true;
+  }
+
+  function showResetNotification(message) {
+    const notif = document.createElement("div");
+    notif.innerHTML = `<div style="font-weight:700; margin-bottom:4px;">✅ Reset Successful!</div><div style="font-size:12px; opacity:0.9;">${message}</div>`;
+    Object.assign(notif.style, {
+      position: "fixed",
+      top: "20px",
+      right: "20px",
+      background: "#10b981",
+      color: "#fff",
+      padding: "14px 20px",
+      borderRadius: "8px",
+      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+      zIndex: "999999",
+      fontSize: "14px",
+      fontFamily: "system-ui, -apple-system, sans-serif",
+      minWidth: "280px"
+    });
+    document.body.appendChild(notif);
+    setTimeout(() => notif.remove(), 4000);
+  }
+
+  // ============================================================================
+  // RESET DIALOG
+  // ============================================================================
+  function showResetDialog() {
+    // Remove existing dialog if any
+    const existing = document.getElementById("sm-reset-dialog");
+    if (existing) existing.remove();
+
+    const dialog = document.createElement("div");
+    dialog.id = "sm-reset-dialog";
+    dialog.innerHTML = `
+      <style>
+        #sm-reset-dialog { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 150000; }
+        #sm-reset-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); }
+        #sm-reset-modal { position: relative; width: 480px; max-width: calc(100% - 32px); background: #fff; border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.3); overflow: hidden; font-family: system-ui, -apple-system, sans-serif; }
+        #sm-reset-modal .header { padding: 20px 24px; background: linear-gradient(135deg, #dc2626, #ef4444); color: #fff; }
+        #sm-reset-modal h3 { margin: 0; font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+        #sm-reset-modal .body { padding: 24px; }
+        #sm-reset-modal .info { background: #fef3c7; border: 1px solid #fbbf24; padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; color: #92400e; }
+        #sm-reset-modal .current-values { background: #f3f4f6; padding: 16px; border-radius: 8px; margin-bottom: 20px; }
+        #sm-reset-modal .current-values .value { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #e5e7eb; }
+        #sm-reset-modal .current-values .value:last-child { border-bottom: none; }
+        #sm-reset-modal .current-values .label { color: #6b7280; font-size: 13px; }
+        #sm-reset-modal .current-values .num { font-weight: 700; font-size: 16px; color: #111827; }
+        #sm-reset-modal .options { display: flex; flex-direction: column; gap: 12px; }
+        #sm-reset-modal .option-btn { padding: 16px 20px; border: 2px solid #e5e7eb; border-radius: 8px; background: #fff; cursor: pointer; text-align: left; font-size: 14px; transition: all 0.2s; display: flex; align-items: center; gap: 12px; }
+        #sm-reset-modal .option-btn:hover { border-color: #dc2626; background: #fef2f2; }
+        #sm-reset-modal .option-btn .icon { font-size: 24px; }
+        #sm-reset-modal .option-btn .text { flex: 1; }
+        #sm-reset-modal .option-btn .title { font-weight: 700; color: #111827; margin-bottom: 4px; }
+        #sm-reset-modal .option-btn .desc { font-size: 12px; color: #6b7280; }
+        #sm-reset-modal .footer { padding: 16px 24px; background: #f9fafb; display: flex; justify-content: flex-end; gap: 8px; }
+        #sm-reset-modal .cancel-btn { padding: 10px 20px; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; cursor: pointer; font-size: 14px; color: #374151; }
+        #sm-reset-modal .cancel-btn:hover { background: #f3f4f6; }
+      </style>
+
+      <div id="sm-reset-backdrop"></div>
+      <div id="sm-reset-modal">
+        <div class="header">
+          <h3>🔄 Reset Options</h3>
+        </div>
+        <div class="body">
+          <div class="info">
+            ⚠️ <strong>Warning:</strong> This action cannot be undone. Choose what you want to reset.
+          </div>
+
+          <div class="current-values">
+            <div class="value">
+              <span class="label">Current Timer:</span>
+              <span class="num" id="reset-current-timer">${fmt(retrieve(KEYS.DAILY_COMMITTED, 0) || 0)}</span>
+            </div>
+            <div class="value">
+              <span class="label">Current Counter:</span>
+              <span class="num" id="reset-current-counter">${retrieve(KEYS.COUNT, 0) || 0}</span>
+            </div>
+          </div>
+
+          <div class="options">
+            <button class="option-btn" data-reset="timer">
+              <div class="icon">⏱️</div>
+              <div class="text">
+                <div class="title">Reset Timer Only</div>
+                <div class="desc">Resets utilization time to 00:00:00 (keeps counter)</div>
+              </div>
+            </button>
+
+            <button class="option-btn" data-reset="counter">
+              <div class="icon">🔢</div>
+              <div class="text">
+                <div class="title">Reset Counter Only</div>
+                <div class="desc">Resets submission count to 0 (keeps timer)</div>
+              </div>
+            </button>
+
+            <button class="option-btn" data-reset="both">
+              <div class="icon">🔄</div>
+              <div class="text">
+                <div class="title">Reset Both (Timer + Counter)</div>
+                <div class="desc">Resets everything: 00:00:00 & 0</div>
+              </div>
+            </button>
+          </div>
+        </div>
+        <div class="footer">
+          <button class="cancel-btn" id="reset-cancel">Cancel</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(dialog);
+
+    // Event handlers
+    dialog.querySelector("#sm-reset-backdrop").addEventListener("click", () => dialog.remove());
+    dialog.querySelector("#reset-cancel").addEventListener("click", () => dialog.remove());
+
+    dialog.querySelectorAll(".option-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const resetType = btn.dataset.reset;
+        dialog.remove();
+        performReset(resetType, "manual");
+      });
+    });
+  }
+
+  // ============================================================================
+  // MIDNIGHT RESET SCHEDULER
+  // ============================================================================
+  function getMsUntilMidnight() {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+    return tomorrow.getTime() - now.getTime();
+  }
+
+  function scheduleMidnightReset() {
+    const msUntilMidnight = getMsUntilMidnight();
+
+    setTimeout(() => {
+      log("🕛 Scheduled midnight reset triggered");
+      performReset("both", "midnight");
+      store(KEYS.LAST_MIDNIGHT_CHECK, new Date().toISOString());
+      scheduleMidnightReset();
+    }, msUntilMidnight);
+
+    const hours = Math.floor(msUntilMidnight / 3600000);
+    const minutes = Math.floor((msUntilMidnight % 3600000) / 60000);
+    log(`⏰ Midnight reset scheduled in ${hours}h ${minutes}m`);
+  }
+
+  function backupMidnightCheck() {
+    const currentDate = todayStr();
+    const lastDate = retrieve(KEYS.LAST_DATE);
+    const lastMidnightCheck = retrieve(KEYS.LAST_MIDNIGHT_CHECK);
+
+    if (lastDate && lastDate !== currentDate) {
+      const today = new Date(currentDate);
+      const lastCheck = lastMidnightCheck ? new Date(lastMidnightCheck) : null;
+
+      if (!lastCheck || lastCheck < today) {
+        log("🔔 Backup midnight check triggered reset");
+        performReset("both", "midnight");
+        store(KEYS.LAST_MIDNIGHT_CHECK, new Date().toISOString());
+      }
+    }
+  }
+
+  setInterval(backupMidnightCheck, 60000);
+
+  // ============================================================================
+  // COMMIT & DISCARD
   // ============================================================================
   function commitActiveTask() {
     if (!activeTask) { log("No active to commit"); return 0; }
@@ -253,10 +496,10 @@
     saveToHistory(todayStr(), newTotal);
     checkDailyAlert(newTotal);
 
+    // FIXED: Always read count from storage, not cached variable
     const c = (retrieve(KEYS.COUNT, 0) || 0) + 1;
     store(KEYS.COUNT, c);
 
-    // push session summary
     pushSessionRecord({
       id: activeTask.id,
       date: new Date().toISOString(),
@@ -282,10 +525,11 @@
   }
 
   // ============================================================================
-  // SUBMISSION INTERCEPTION
+  // SUBMISSION INTERCEPTION - FIXED
   // ============================================================================
   function initSubmissionInterceptor() {
-    let count = retrieve(KEYS.COUNT, 0) || 0;
+    // REMOVED: let count = retrieve(KEYS.COUNT, 0) || 0;
+    // Now we always read from storage to get the latest value
 
     if (typeof window.fetch === "function") {
       const origFetch = window.fetch;
@@ -297,8 +541,7 @@
             if (method.toUpperCase() === "POST" && response.ok && /submit|complete|finish/i.test(url)) {
               log("Detected submission via fetch");
               commitActiveTask();
-              count++;
-              store(KEYS.COUNT, count);
+              // Count is now updated in commitActiveTask()
               updateDisplay();
             }
           } catch (e) { log(e); }
@@ -323,8 +566,7 @@
             if (info && info.method.toUpperCase() === "POST" && this.status >= 200 && this.status < 300 && /submit|complete|finish/i.test(info.url)) {
               log("Detected submission via XHR");
               commitActiveTask();
-              count++;
-              store(KEYS.COUNT, count);
+              // Count is now updated in commitActiveTask()
               updateDisplay();
             }
           } catch (e) { log(e); }
@@ -344,12 +586,11 @@
     window.__SM_SHIELD.pushDom();
     checkDailyReset();
 
-    // Check if we're on a task page and show/hide display accordingly
     if (isTaskPage()) {
       display.style.display = "flex";
     } else {
       display.style.display = "none";
-      return; // Don't track if not on task page
+      return;
     }
 
     if (hasTaskExpiredOnPage()) {
@@ -386,7 +627,7 @@
   }
 
   // ============================================================================
-  // UI: Footer + Dashboard Modal (D1)
+  // UI: Footer + Dashboard Modal
   // ============================================================================
   const FOOTER_SELECTORS = ".cswui-footer, .awsui-footer, #footer-root, .awsui-util-pv-xs.cswui-footer";
   const display = document.createElement("div");
@@ -404,13 +645,11 @@
   countLabel.textContent = " | Count: 0";
   display.appendChild(countLabel);
 
-  // create modal (D1 Dashboard)
   function createDashboardModal() {
     if (document.getElementById("sm-dashboard-root")) return document.getElementById("sm-dashboard-root");
     const root = document.createElement("div"); root.id = "sm-dashboard-root";
     root.innerHTML = `
       <style>
-        /* modal backdrop */
         #sm-dashboard-root { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 120000; }
         #sm-db-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
         #sm-db { position: relative; width: 980px; max-width: calc(100% - 48px); max-height: calc(100% - 80px); background: #ffffff; border-radius: 8px; box-shadow: 0 12px 40px rgba(11,18,32,0.6); overflow: hidden; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; color:#0b1220; }
@@ -422,18 +661,18 @@
         .card { background:#f7fbff; border-radius:8px; padding:12px; box-shadow: 0 1px 0 rgba(11,18,32,0.03); }
         .card .big { font-size:20px; font-weight:700; }
         .row-cards { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
-        /* tabs */
         .tabs { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
         .tab { padding:8px 10px; border-radius:6px; cursor:pointer; font-size:13px; color:#385a8a; background:transparent; border:1px solid transparent; }
         .tab.active { background:#eaf3ff; border-color:#d1e9ff; box-shadow: inset 0 -2px 0 rgba(0,0,0,0.02); }
-        /* charts area */
         #sm-charts { flex:1; background:linear-gradient(180deg,#ffffff,#fbfdff); border-radius:6px; padding:12px; overflow:auto; }
         #sm-sessions { flex:1; overflow:auto; background:#fff; border-radius:6px; padding:8px; }
         table.sm-table { width:100%; border-collapse:collapse; font-size:13px; }
         table.sm-table th, table.sm-table td { padding:8px 6px; border-bottom:1px solid #eef2f6; text-align:left; }
         .actions { display:flex; gap:8px; }
-        .btn { background:#2b6aa3; color:#fff; padding:6px 10px; border-radius:6px; border:none; cursor:pointer; }
+        .btn { background:#2b6aa3; color:#fff; padding:6px 10px; border-radius:6px; border:none; cursor:pointer; font-size:13px; }
         .btn.ghost { background:#fff; color:#2b6aa3; border:1px solid #cfe0ff; }
+        .btn.danger { background:#dc2626; color:#fff; border:1px solid #b91c1c; }
+        .btn.danger:hover { background:#b91c1c; }
         .small-muted { color:#6b7a90; font-size:12px; }
         #sm-footer { padding:12px 16px; border-top:1px solid #eef2f6; display:flex; justify-content:flex-end; gap:8px; background:#fff; }
         #sm-db-close { cursor:pointer; font-size:18px; color:#385a8a; border:none; background:transparent; }
@@ -448,7 +687,7 @@
         <div class="header">
           <div style="display:flex; gap:12px; align-items:center;">
             <h2>SageMaker Utilization — Dashboard</h2>
-            <div class="small-muted">AWS-accurate, paused sessions excluded, expired sessions discarded</div>
+            <div class="small-muted">⏰ Auto-reset at midnight</div>
           </div>
           <div style="display:flex; gap:8px; align-items:center;">
             <button id="sm-db-close" title="Close">✕</button>
@@ -501,6 +740,7 @@
               </div>
               <div style="flex:1"></div>
               <div class="actions">
+                <button class="btn danger" id="db-manual-reset" title="Reset options">🔄 Reset</button>
                 <button class="btn" id="db-export-json">Export JSON</button>
                 <button class="btn ghost" id="db-clear-sessions">Clear</button>
               </div>
@@ -544,10 +784,17 @@
 
               <div id="db-settings-panel" class="card" style="display:none;">
                 <div style="font-weight:600; margin-bottom:8px;">Settings</div>
-                <div style="display:flex; gap:8px; align-items:center;">
-                  <label class="small-muted">Max sessions stored:</label>
-                  <input id="db-max-sessions" type="number" min="100" max="10000" style="width:80px" value="${CONFIG.SESSIONS_LIMIT}">
-                  <button class="btn ghost" id="db-save-settings">Save</button>
+                <div style="display:flex; flex-direction:column; gap:12px;">
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    <label class="small-muted">Max sessions stored:</label>
+                    <input id="db-max-sessions" type="number" min="100" max="10000" style="width:80px; padding:4px 8px; border:1px solid #cfe0ff; border-radius:4px;" value="${CONFIG.SESSIONS_LIMIT}">
+                    <button class="btn ghost" id="db-save-settings">Save</button>
+                  </div>
+                  <div style="padding:12px; background:#fff3cd; border:1px solid #ffc107; border-radius:6px;">
+                    <div style="font-weight:600; margin-bottom:4px;">🔄 Selective Reset</div>
+                    <div class="small-muted" style="margin-bottom:8px;">Choose to reset timer only, counter only, or both</div>
+                    <button class="btn danger" id="db-manual-reset-2">Open Reset Options</button>
+                  </div>
                 </div>
               </div>
 
@@ -557,14 +804,13 @@
         </div>
 
         <div id="sm-footer">
-          <div class="small-muted" style="margin-right:auto">Data stored locally: history & session summaries</div>
+          <div class="small-muted" style="margin-right:auto">⏰ Midnight auto-reset active | 🔄 Manual reset in dashboard</div>
           <button class="btn ghost" id="db-close-2">Close</button>
         </div>
       </div>
     `;
     document.body.appendChild(root);
 
-    // handlers
     root.querySelector("#sm-db-backdrop").addEventListener("click", hideDashboard);
     root.querySelector("#sm-db-close").addEventListener("click", hideDashboard);
     root.querySelector("#db-close-2").addEventListener("click", hideDashboard);
@@ -587,6 +833,8 @@
     root.querySelector("#db-export-json2").addEventListener("click", dashboardExportJSON);
     root.querySelector("#db-export-csv").addEventListener("click", dashboardExportCSV);
     root.querySelector("#db-import-json").addEventListener("click", dashboardImportJSON);
+    root.querySelector("#db-manual-reset").addEventListener("click", showResetDialog);
+    root.querySelector("#db-manual-reset-2").addEventListener("click", showResetDialog);
     root.querySelector("#db-clear-sessions").addEventListener("click", () => {
       if (!confirm("Clear all session summaries?")) return;
       store(KEYS.SESSIONS, []);
@@ -604,17 +852,14 @@
   function showDashboard() { const root = createDashboardModal(); root.style.display = "flex"; updateDashboard(); }
   function hideDashboard() { const root = document.getElementById("sm-dashboard-root"); if (root) root.style.display = "none"; }
 
-  // dashboard utilities
   function getSessions() { return retrieve(KEYS.SESSIONS, []) || []; }
   function updateDashboard() {
     const root = createDashboardModal();
-    // update top cards
     const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
     const count = retrieve(KEYS.COUNT, 0) || 0;
     root.querySelector("#db-today-time").textContent = fmt(committed);
     root.querySelector("#db-today-count").textContent = String(count);
 
-    // recent sessions
     const recentContainer = root.querySelector("#db-recent");
     recentContainer.innerHTML = "";
     const sessions = getSessions();
@@ -626,17 +871,14 @@
       recentContainer.appendChild(el);
     });
 
-    // avg per task
     const submittedSessions = sessions.filter(s => s.action === "submitted");
     const avg = submittedSessions.length ? Math.round(submittedSessions.reduce((a,b)=>a+b.duration,0)/submittedSessions.length) : 0;
     root.querySelector("#db-avg-task").textContent = fmt(avg);
 
-    // week total
     const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate()-6);
     const weekTotal = sessions.filter(s => new Date(s.date) >= weekAgo && s.action === "submitted").reduce((a,b)=>a+b.duration,0);
     root.querySelector("#db-week-total").textContent = fmt(weekTotal);
 
-    // fill table
     const tbody = root.querySelector("#db-sessions-table tbody");
     tbody.innerHTML = "";
     for (const s of sessions.slice(0, 200)) {
@@ -649,7 +891,6 @@
       tbody.appendChild(tr);
     }
 
-    // charts: 30-day utilization & submissions
     const history = retrieve(KEYS.HISTORY, {}) || {};
     drawMiniChart(root.querySelector("#db-30chart"), history, { days: CONFIG.MAX_HISTORY_DAYS, color:"#2b6aa3" });
     drawMiniCountChart(root.querySelector("#db-countchart"), history, { days: CONFIG.MAX_HISTORY_DAYS, color:"#7aa7d9" });
@@ -657,13 +898,11 @@
 
   function refreshDashboardPanels() {
     const root = createDashboardModal();
-    // when panels switch, we can refresh heavy areas
     setTimeout(() => {
       updateDashboard();
     }, 80);
   }
 
-  // mini charts (SVG)
   function drawMiniChart(container, history, opts={}) {
     if (!container) return;
     const days = opts.days || 30;
@@ -692,7 +931,7 @@
     const arr = [];
     for (let i = days-1; i >= 0; i--) {
       const d = new Date(); d.setDate(d.getDate()-i); const key = d.toISOString().split("T")[0];
-      const val = (history[key] && typeof history[key] === "number") ? 1 : 0; // using presence as one submission day
+      const val = (history[key] && typeof history[key] === "number") ? 1 : 0;
       arr.push(val);
     }
     const w = container.clientWidth || 220, h = container.clientHeight || 120;
@@ -758,10 +997,9 @@
   }
 
   // ============================================================================
-  // Footer attach (fix duplicate button)
+  // Footer attach - NO RESET BUTTON
   // ============================================================================
   function attachToFooter() {
-    // Only attach if we're on a task page
     if (!isTaskPage()) {
       return;
     }
@@ -770,31 +1008,30 @@
     if (!footer) return;
     if (getComputedStyle(footer).position === "static") footer.style.position = "relative";
 
-    // remove duplicate utilization blocks EXCEPT first
     const existingUtil = document.querySelectorAll("#sm-utilization");
     if (existingUtil.length > 1) {
       for (let i = 1; i < existingUtil.length; i++) existingUtil[i].remove();
     }
 
-    // if our display not in document (or was removed), append to footer
     if (!footer.contains(display)) footer.appendChild(display);
 
-    // ensure only one log button inside our display
     const existingBtn = display.querySelector("#sm-log-btn");
-    if (existingBtn) return; // already added
 
-    // create S1-style button
-    const btn = document.createElement("button");
-    btn.id = "sm-log-btn"; btn.type = "button"; btn.title = "Open utilization dashboard";
-    btn.innerHTML = "📊 Log";
-    Object.assign(btn.style, {
-      marginLeft: "8px", padding: "6px 10px", borderRadius: "6px", background: "#ffffff",
-      color: "#0b1220", border: "1px solid #cfcfcf", boxShadow: "none", cursor: "pointer", fontSize: "13px",
-    });
-    btn.addEventListener("mouseenter", () => btn.style.background = "#f5f7fb");
-    btn.addEventListener("mouseleave", () => btn.style.background = "#ffffff");
-    btn.addEventListener("click", showDashboard);
-    display.appendChild(btn);
+    if (!existingBtn) {
+      const btn = document.createElement("button");
+      btn.id = "sm-log-btn"; btn.type = "button"; btn.title = "Open utilization dashboard";
+      btn.innerHTML = "📊 Log";
+      Object.assign(btn.style, {
+        marginLeft: "8px", padding: "6px 10px", borderRadius: "6px", background: "#ffffff",
+        color: "#0b1220", border: "1px solid #cfcfcf", boxShadow: "none", cursor: "pointer", fontSize: "13px",
+      });
+      btn.addEventListener("mouseenter", () => btn.style.background = "#f5f7fb");
+      btn.addEventListener("mouseleave", () => btn.style.background = "#ffffff");
+      btn.addEventListener("click", showDashboard);
+      display.appendChild(btn);
+    }
+
+    // REMOVED: Reset button from footer
   }
 
   let footerTimer = null;
@@ -815,7 +1052,7 @@
   }
 
   // ============================================================================
-  // BUTTON WIRING (Stop/Release/Submit/Skip)
+  // BUTTON WIRING
   // ============================================================================
   function wireTaskActionButtons() {
     const selector = 'button, [role="button"], input[type="button"], input[type="submit"], a';
@@ -866,15 +1103,15 @@
   // INIT
   // ============================================================================
   log("Init");
+  checkDailyReset();
+  scheduleMidnightReset();
   initSubmissionInterceptor();
   attachToFooter();
   updateDisplay();
   setInterval(trackOnce, CONFIG.CHECK_INTERVAL_MS);
 
-  // keyboard shortcut (works from any page)
   window.addEventListener("keydown", (e) => { if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "u") showDashboard(); });
 
-  log("Ready");
+  log("Ready - Dashboard-only reset | Counter bug fixed");
 
-  // End of script
 })();
