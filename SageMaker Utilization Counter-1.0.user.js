@@ -1,15 +1,14 @@
 // ==UserScript==
-// @name         SageMaker Utilization Counter
+// @name         SageMaker Utilization Counter - Dashboard (AWS-style D1)
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  AI-Enhanced SageMaker Utilization + Count Tracker
+// @version      1.3
+// @description  AWS-accurate Utilization + Professional Dashboard (Overview / Charts / Task Log) + Compatibility Shield - PVSANKAR
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
 // @grant        none
-// @updateURL   https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.0.user.js
-// @downloadURL https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.0.user.js
+// @updateURL   https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.3.user.js
+// @downloadURL https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.3.user.js
 // ==/UserScript==
-
 
 (function () {
   "use strict";
@@ -18,770 +17,864 @@
   window.__SM_TIMER_RUNNING__ = true;
 
   // ============================================================================
-  //                    CONFIG
+  // CONFIG
   // ============================================================================
-
   const CONFIG = {
-    CHECK_INTERVAL_MS: 500, // Faster updates for smoother timer
+    CHECK_INTERVAL_MS: 500,
     DAILY_ALERT_HOURS: 8,
     MAX_HISTORY_DAYS: 30,
-    DEBUG: true, // Enable for troubleshooting
-    SYNC_TOLERANCE: 5, // Seconds of acceptable drift before resync
+    DEBUG: false,
+    SESSIONS_LIMIT: 2000, // max number of stored session records
   };
 
+  function log(...args) { if (CONFIG.DEBUG) console.log("[SM]", ...args); }
+
+  // ============================================================================
+  // KEYS
+  // ============================================================================
   const KEYS = {
     DAILY_COMMITTED: "sm_daily_committed",
-    ACTIVE_TASKS: "sm_active_tasks",
     LAST_DATE: "sm_last_date",
     HISTORY: "sm_history",
     COUNT: "sm_count",
     LAST_RESET: "sm_last_reset",
+    IGNORE_TASK: "sm_ignore_task",      // sessionStorage
+    SESSIONS: "sm_sessions"             // per-task session summaries
   };
 
-  const FOOTER_SELECTORS = ".cswui-footer, .awsui-footer, #footer-root, .awsui-util-pv-xs.cswui-footer";
+  // ============================================================================
+  // STORAGE HELPERS
+  // ============================================================================
+  function store(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { log("store err", e); }
+  }
+  function retrieve(key, fallback = null) {
+    try {
+      const v = localStorage.getItem(key);
+      return v ? JSON.parse(v) : fallback;
+    } catch (e) { return fallback; }
+  }
+  function setIgnoreTask(taskId) {
+    try { if (taskId == null) sessionStorage.removeItem(KEYS.IGNORE_TASK); else sessionStorage.setItem(KEYS.IGNORE_TASK, taskId); } catch (e) { log(e); }
+  }
+  function getIgnoreTask() { try { return sessionStorage.getItem(KEYS.IGNORE_TASK); } catch (e) { return null; } }
 
   // ============================================================================
-  //                           HELPER FUNCTIONS
+  // FORMATTING
   // ============================================================================
-
-  const today = () => new Date().toISOString().split("T")[0];
-
-  const fmt = (seconds) => {
+  const todayStr = () => new Date().toISOString().split("T")[0];
+  function fmt(seconds) {
+    seconds = Math.max(0, Math.floor(+seconds || 0));
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
     return [h, m, s].map(n => String(n).padStart(2, "0")).join(":");
-  };
-
-  function log(...args) {
-    if (CONFIG.DEBUG) {
-      console.log(`[SM ${new Date().toISOString().split('T')[1].slice(0, 8)}]`, ...args);
-    }
-  }
-
-  function store(key, value) {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch (e) {
-      log("Store error:", e);
-    }
-  }
-
-  function retrieve(key, fallback = null) {
-    try {
-      const val = localStorage.getItem(key);
-      return val ? JSON.parse(val) : fallback;
-    } catch (e) {
-      return fallback;
-    }
-  }
-
-  function getTaskIdentifier() {
-    return window.location.pathname + window.location.search;
   }
 
   // ============================================================================
-  //                    ENHANCED AWS TIMER DETECTION
+  // TASK PAGE DETECTION
   // ============================================================================
+  function isTaskPage() {
+    // Check if we're on a task page by looking for task-related patterns
+    const url = window.location.href.toLowerCase();
+    const path = window.location.pathname.toLowerCase();
 
+    // Check for common task page indicators
+    if (url.includes('/task') ||
+        url.includes('/labeling') ||
+        url.includes('/annotation') ||
+        path.includes('/task') ||
+        path.includes('/labeling')) {
+      return true;
+    }
+
+    // Check if AWS timer is present on the page
+    const awsTimer = parseAWSTimer();
+    if (awsTimer) {
+      return true;
+    }
+
+    // Check for task-related text content
+    const bodyText = (document.body.innerText || "").toLowerCase();
+    if (bodyText.includes("task time") &&
+        (bodyText.includes("submit") || bodyText.includes("complete"))) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // ============================================================================
+  // COMPATIBILITY SHIELD
+  // ============================================================================
+  (function Shield() {
+    window.__SM_DOM_EVENTS__ = window.__SM_DOM_EVENTS__ || [];
+    function pushDom() {
+      const now = performance.now();
+      window.__SM_DOM_EVENTS__.push(now);
+      window.__SM_DOM_EVENTS__ = window.__SM_DOM_EVENTS__.filter(t => now - t < 1000);
+      return window.__SM_DOM_EVENTS__.length;
+    }
+    window.__SM_SHIELD = {
+      pushDom,
+      isLikelyVideoNoise() {
+        const vids = document.querySelectorAll ? document.querySelectorAll("video").length : 0;
+        const evs = window.__SM_DOM_EVENTS__.length;
+        return (vids > 0 && evs > 25) || evs > 60;
+      },
+      containsAWSTimerKeywords(text) {
+        if (!text) return false;
+        const t = text.toLowerCase();
+        return t.includes("task") && (t.includes("time") || t.includes("min") || t.includes("sec") || t.includes("duration"));
+      }
+    };
+    log("Shield active");
+  })();
+
+  // ============================================================================
+  // AWS TIMER PARSING
+  // ============================================================================
   function parseAWSTimer() {
     try {
       const bodyText = document.body.innerText || document.body.textContent || "";
+      const cleanText = bodyText.replace(/\s+/g, " ").trim();
+      if (!window.__SM_SHIELD.containsAWSTimerKeywords(cleanText)) return null;
 
-      // Pattern 1: "Task time: MM:SS of XX Min YY Sec"
-      let match = bodyText.match(/Task\s+time[:\s]+(\d+):(\d+)\s+of\s+(\d+)\s*Min\s+(\d+)\s*Sec/i);
-      if (match) {
-        const current = parseInt(match[1]) * 60 + parseInt(match[2]);
-        const limit = parseInt(match[3]) * 60 + parseInt(match[4]);
-        log(`✓ Detected AWS timer: ${fmt(current)} / ${fmt(limit)}`);
-        return { current, limit, remaining: limit - current };
-      }
+      let m = cleanText.match(/Task\s+time[:\s]+(\d+):(\d+)\s+of\s+(\d+)\s*Min\s+(\d+)\s*Sec/i);
+      if (m) return { current: (+m[1])*60 + (+m[2]), limit: (+m[3])*60 + (+m[4]), remaining: (+m[3])*60 + (+m[4]) - ((+m[1])*60 + (+m[2])) };
 
-      // Pattern 2: "Task time: MM:SS of MM:SS"
-      match = bodyText.match(/Task\s+time[:\s]+(\d+):(\d+)\s+(?:of|\/)\s+(\d+):(\d+)/i);
-      if (match) {
-        const current = parseInt(match[1]) * 60 + parseInt(match[2]);
-        const limit = parseInt(match[3]) * 60 + parseInt(match[4]);
-        log(`✓ Detected AWS timer: ${fmt(current)} / ${fmt(limit)}`);
-        return { current, limit, remaining: limit - current };
-      }
+      m = cleanText.match(/Task\s+time[:\s]+(\d+):(\d+)\s+(?:of|\/)\s+(\d+):(\d+)/i);
+      if (m) return { current: (+m[1])*60 + (+m[2]), limit: (+m[3])*60 + (+m[4]), remaining: (+m[3])*60 + (+m[4]) - ((+m[1])*60 + (+m[2])) };
 
-      // Pattern 3: Simple "Task time: MM:SS"
-      match = bodyText.match(/Task\s+time[:\s]+(\d+):(\d+)/i);
-      if (match) {
-        const current = parseInt(match[1]) * 60 + parseInt(match[2]);
-        const limit = 3600; // Default 60 min
-        log(`✓ Detected AWS timer: ${fmt(current)} (no limit shown)`);
-        return { current, limit, remaining: limit - current };
-      }
+      m = cleanText.match(/Task\s+time[:\s]+(\d+):(\d+)/i);
+      if (m) return { current: (+m[1])*60 + (+m[2]), limit: 3600, remaining: 3600 - ((+m[1])*60 + (+m[2])) };
 
-      // Pattern 4: Alternative formats
-      match = bodyText.match(/(?:Time|Timer|Duration)[:\s]+(\d+):(\d+)/i);
-      if (match) {
-        const current = parseInt(match[1]) * 60 + parseInt(match[2]);
-        const limit = 3600;
-        log(`✓ Detected timer: ${fmt(current)}`);
-        return { current, limit, remaining: limit - current };
-      }
+      m = cleanText.match(/(?:Time|Timer|Duration)[:\s]+(\d+):(\d+)/i);
+      if (m) return { current: (+m[1])*60 + (+m[2]), limit: 3600, remaining: 3600 - ((+m[1])*60 + (+m[2])) };
 
       return null;
-    } catch (e) {
-      log("Parse error:", e);
-      return null;
-    }
+    } catch (e) { log("parseAWSTimer err", e); return null; }
   }
 
-  function hasTaskExpired() {
+  function hasTaskExpiredOnPage() {
     try {
-      const text = (document.body.innerText || "").toLowerCase();
-      return (
-        text.includes("task has expired") ||
-        text.includes("task expired") ||
-        text.includes("time is up") ||
-        text.includes("time limit") ||
-        text.includes("session expired")
-      );
-    } catch (e) {
-      return false;
-    }
+      const t = (document.body.innerText || "").toLowerCase();
+      if (!t) return false;
+      return (t.includes("task has expired") || t.includes("task expired") || t.includes("time is up") || t.includes("time limit") || t.includes("session expired"));
+    } catch (e) { return false; }
   }
 
   // ============================================================================
-  //              HYBRID TASK TRACKING (AI-ENHANCED)
+  // IN-MEMORY ACTIVE TASK (no per-second storage)
   // ============================================================================
+  let activeTask = null;
+  function getTaskIdFromUrl() { return window.location.pathname + window.location.search; }
 
-  function getActiveTasks() {
-    return retrieve(KEYS.ACTIVE_TASKS, {});
+  function startNewTaskFromAWS(awsData) {
+    const id = getTaskIdFromUrl();
+    activeTask = { id, awsCurrent: awsData.current, awsLimit: awsData.limit, lastAws: awsData.current, status: "active", createdAt: Date.now() };
+    log("New task", id, fmt(activeTask.awsCurrent));
+    return activeTask;
   }
 
-  function saveActiveTasks(tasks) {
-    store(KEYS.ACTIVE_TASKS, tasks);
-  }
-
-  /**
-   * AI-Enhanced Task Creation with Hybrid Tracking
-   * - Tracks both AWS timer AND local elapsed time
-   * - Syncs periodically to avoid drift
-   * - Handles pauses correctly
-   */
-  function createOrUpdateTask(taskId, awsData) {
-    const tasks = getActiveTasks();
-    const now = Date.now();
-
-    if (!tasks[taskId]) {
-      // NEW TASK - Initialize hybrid tracking
-      tasks[taskId] = {
-        taskId,
-
-        // Timestamps
-        createdAt: now,
-        lastSeenAt: now,
-        lastSyncAt: now,
-
-        // AWS sync data
-        initialAWSTime: awsData.current,
-        lastAWSTime: awsData.current,
-        limitSeconds: awsData.limit,
-
-        // Local tracking (independent of AWS)
-        localElapsedSeconds: 0,
-
-        // Pause tracking
-        isPaused: false,
-        pausedAt: null,
-        totalPausedDuration: 0,
-
-        // State
-        status: "active",
-        wasOpenedAfterCreation: true,
-
-        // Expiry
-        expiresAt: now + awsData.remaining * 1000,
-      };
-
-      log(`🆕 NEW TASK: ${taskId.substring(0, 50)}...`);
-      log(`   Initial AWS time: ${fmt(awsData.current)}`);
-      log(`   Limit: ${fmt(awsData.limit)}`);
-
-    } else {
-      // EXISTING TASK - Update and sync
-      const task = tasks[taskId];
-      task.lastSeenAt = now;
-      task.wasOpenedAfterCreation = true;
-
-      if (!task.isPaused && task.status === "active") {
-        // Calculate local elapsed time (wall clock)
-        const timeSinceLastSync = (now - task.lastSyncAt) / 1000;
-        task.localElapsedSeconds += timeSinceLastSync;
-
-        // Check drift between AWS and local tracking
-        const expectedAWSTime = task.initialAWSTime + Math.floor(task.localElapsedSeconds);
-        const drift = Math.abs(awsData.current - expectedAWSTime);
-
-        if (drift > CONFIG.SYNC_TOLERANCE) {
-          log(`⚠️ DRIFT DETECTED: ${drift}s - Resyncing...`);
-          // Resync: trust AWS timer, adjust local tracking
-          task.localElapsedSeconds = awsData.current - task.initialAWSTime;
-        }
-
-        task.lastAWSTime = awsData.current;
-        task.lastSyncAt = now;
-        task.expiresAt = now + awsData.remaining * 1000;
-
-        // Detect resume from pause (AWS timer increased)
-        if (task.pausedAt && awsData.current > task.lastAWSTime) {
-          log(`▶️ AUTO-RESUMED (AWS timer increased)`);
-          task.isPaused = false;
-          task.pausedAt = null;
-        }
-      }
+  function updateActiveTaskFromAWS(awsData) {
+    if (!activeTask) return startNewTaskFromAWS(awsData);
+    const id = getTaskIdFromUrl();
+    if (activeTask.id !== id) { activeTask = null; return startNewTaskFromAWS(awsData); }
+    if (typeof awsData.current === "number") {
+      if (awsData.current === activeTask.lastAws) activeTask.status = "paused";
+      else if (awsData.current > activeTask.lastAws) activeTask.status = "active";
+      activeTask.awsCurrent = awsData.current;
+      activeTask.awsLimit = awsData.limit;
+      activeTask.lastAws = awsData.current;
     }
-
-    saveActiveTasks(tasks);
-    return tasks[taskId];
-  }
-
-  /**
-   * Pause task - freeze time tracking
-   */
-  function pauseTask(taskId) {
-    const tasks = getActiveTasks();
-    const task = tasks[taskId];
-
-    if (!task || task.isPaused) return;
-
-    const now = Date.now();
-    task.isPaused = true;
-    task.pausedAt = now;
-
-    saveActiveTasks(tasks);
-    log(`⏸️ PAUSED at ${fmt(task.localElapsedSeconds)}`);
-  }
-
-  /**
-   * Resume task - continue time tracking
-   */
-  function resumeTask(taskId) {
-    const tasks = getActiveTasks();
-    const task = tasks[taskId];
-
-    if (!task || !task.isPaused) return;
-
-    const now = Date.now();
-    const pauseDuration = (now - task.pausedAt) / 1000;
-    task.totalPausedDuration += pauseDuration;
-    task.isPaused = false;
-    task.pausedAt = null;
-    task.lastSyncAt = now; // Reset sync point
-
-    saveActiveTasks(tasks);
-    log(`▶️ RESUMED after ${fmt(Math.floor(pauseDuration))} pause`);
-  }
-
-  /**
-   * Get current elapsed seconds (the actual timer value to display)
-   */
-  function getCurrentElapsedSeconds(task) {
-    if (!task) return 0;
-
-    if (task.isPaused) {
-      // Frozen at pause point
-      return Math.floor(task.localElapsedSeconds);
-    } else {
-      // Active - calculate current elapsed
-      const now = Date.now();
-      const timeSinceLastSync = (now - task.lastSyncAt) / 1000;
-      return Math.floor(task.localElapsedSeconds + timeSinceLastSync);
-    }
-  }
-
-  /**
-   * Commit task - save to daily total
-   */
-  function commitTask(taskId) {
-    const tasks = getActiveTasks();
-    const task = tasks[taskId];
-
-    if (!task) {
-      log(`❌ Cannot commit - task not found`);
-      return 0;
-    }
-
-    const finalElapsed = getCurrentElapsedSeconds(task);
-
-    if (finalElapsed <= 0) {
-      log(`❌ Cannot commit - no time elapsed`);
-      delete tasks[taskId];
-      saveActiveTasks(tasks);
-      return 0;
-    }
-
-    const committed = retrieve(KEYS.DAILY_COMMITTED, 0);
-    const newTotal = committed + finalElapsed;
-
-    store(KEYS.DAILY_COMMITTED, newTotal);
-    saveToHistory(today(), newTotal);
-    checkDailyAlert(newTotal);
-
-    log(`✅ COMMITTED: ${fmt(finalElapsed)} → Total: ${fmt(newTotal)}`);
-
-    delete tasks[taskId];
-    saveActiveTasks(tasks);
-
-    return finalElapsed;
-  }
-
-  /**
-   * Discard task - remove without saving
-   */
-  function discardTask(taskId, reason) {
-    const tasks = getActiveTasks();
-    const task = tasks[taskId];
-
-    if (!task) return;
-
-    log(`🗑️ DISCARDED: ${reason}`);
-    delete tasks[taskId];
-    saveActiveTasks(tasks);
-  }
-
-  /**
-   * Cleanup expired tasks
-   */
-  function cleanupExpiredTasks() {
-    const tasks = getActiveTasks();
-    const now = Date.now();
-    let cleaned = false;
-
-    for (const taskId in tasks) {
-      const task = tasks[taskId];
-
-      // Remove tasks expired and not reopened
-      if (now > task.expiresAt && !task.wasOpenedAfterCreation) {
-        log(`🧹 Cleaning expired task`);
-        delete tasks[taskId];
-        cleaned = true;
-      }
-    }
-
-    if (cleaned) {
-      saveActiveTasks(tasks);
-    }
-  }
-
-  /**
-   * Mark task as backgrounded
-   */
-  function markTaskAsBackgrounded(taskId) {
-    const tasks = getActiveTasks();
-    const task = tasks[taskId];
-
-    if (task) {
-      task.wasOpenedAfterCreation = false;
-      saveActiveTasks(tasks);
-      log(`📱 Backgrounded`);
-    }
+    return activeTask;
   }
 
   // ============================================================================
-  //                          DAILY RESET & HISTORY
+  // SESSIONS STORAGE (safe per-task summaries)
   // ============================================================================
+  function pushSessionRecord(rec) {
+    try {
+      const sessions = retrieve(KEYS.SESSIONS, []) || [];
+      sessions.unshift(rec); // newest first
+      if (sessions.length > CONFIG.SESSIONS_LIMIT) sessions.length = CONFIG.SESSIONS_LIMIT;
+      store(KEYS.SESSIONS, sessions);
+    } catch (e) { log("pushSession err", e); }
+  }
 
+  // ============================================================================
+  // DAILY RESET & HISTORY
+  // ============================================================================
   function checkDailyReset() {
-    const currentDate = today();
+    const currentDate = todayStr();
     const lastDate = retrieve(KEYS.LAST_DATE);
-
     if (lastDate !== currentDate) {
-      log(`📅 NEW DAY: Resetting counters`);
+      log("New day - resetting");
       store(KEYS.LAST_DATE, currentDate);
       store(KEYS.DAILY_COMMITTED, 0);
       store(KEYS.COUNT, 0);
       store(KEYS.LAST_RESET, currentDate);
-      store(KEYS.ACTIVE_TASKS, {});
+      setIgnoreTask(null);
       return 0;
     }
-
     return retrieve(KEYS.DAILY_COMMITTED, 0);
   }
 
   function saveToHistory(dateStr, totalSeconds) {
-    const history = retrieve(KEYS.HISTORY, {});
+    const history = retrieve(KEYS.HISTORY, {}) || {};
     history[dateStr] = totalSeconds;
-
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - CONFIG.MAX_HISTORY_DAYS);
-    const cutoffStr = cutoffDate.toISOString().split("T")[0];
-
-    for (const date in history) {
-      if (date < cutoffStr) delete history[date];
-    }
-
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - CONFIG.MAX_HISTORY_DAYS);
+    const cutoffStr = cutoff.toISOString().split("T")[0];
+    for (const d in history) if (d < cutoffStr) delete history[d];
     store(KEYS.HISTORY, history);
   }
 
   function checkDailyAlert(totalSeconds) {
     if (!CONFIG.DAILY_ALERT_HOURS || CONFIG.DAILY_ALERT_HOURS <= 0) return;
-
     const threshold = CONFIG.DAILY_ALERT_HOURS * 3600;
-    const dateKey = today();
-    const alertKey = `sm_alert_${dateKey}`;
-
-    if (totalSeconds >= threshold && !sessionStorage.getItem(alertKey)) {
-      sessionStorage.setItem(alertKey, "1");
-      alert(`🎉 You've reached ${CONFIG.DAILY_ALERT_HOURS} hours today!`);
+    const key = `sm_alert_${todayStr()}`;
+    if (totalSeconds >= threshold && !sessionStorage.getItem(key)) {
+      sessionStorage.setItem(key, "1");
+      try { alert(`🎉 You've reached ${CONFIG.DAILY_ALERT_HOURS} hours today!`); } catch (e) {}
     }
   }
 
   // ============================================================================
-  //                          SUBMISSION COUNTER
+  // COMMIT & DISCARD (safe summary recording)
   // ============================================================================
+  function commitActiveTask() {
+    if (!activeTask) { log("No active to commit"); return 0; }
+    const finalElapsed = activeTask.awsCurrent || 0;
+    if (finalElapsed <= 0) { activeTask = null; return 0; }
+    const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+    const newTotal = committed + finalElapsed;
+    store(KEYS.DAILY_COMMITTED, newTotal);
+    saveToHistory(todayStr(), newTotal);
+    checkDailyAlert(newTotal);
 
-  function initCounter() {
-    let count = retrieve(KEYS.COUNT, 0);
+    const c = (retrieve(KEYS.COUNT, 0) || 0) + 1;
+    store(KEYS.COUNT, c);
 
-    function increment() {
-      count++;
-      store(KEYS.COUNT, count);
-      updateDisplay();
-      log(`📊 Count: ${count}`);
-    }
+    // push session summary
+    pushSessionRecord({
+      id: activeTask.id,
+      date: new Date().toISOString(),
+      duration: finalElapsed,
+      action: "submitted"
+    });
 
-    // Intercept fetch
+    log(`Committed ${fmt(finalElapsed)} → total ${fmt(newTotal)} (count ${c})`);
+    const id = activeTask.id;
+    activeTask = null;
+    if (getIgnoreTask() === id) setIgnoreTask(null);
+    return finalElapsed;
+  }
+
+  function discardActiveTask(reason) {
+    if (!activeTask) return;
+    const rec = { id: activeTask.id, date: new Date().toISOString(), duration: activeTask.awsCurrent || 0, action: reason || "discarded" };
+    pushSessionRecord(rec);
+    log("Discarded", rec);
+    const id = activeTask.id;
+    activeTask = null;
+    try { setIgnoreTask(id); } catch (e) { log("ignore set err", e); }
+  }
+
+  // ============================================================================
+  // SUBMISSION INTERCEPTION
+  // ============================================================================
+  function initSubmissionInterceptor() {
+    let count = retrieve(KEYS.COUNT, 0) || 0;
+
     if (typeof window.fetch === "function") {
-      const originalFetch = window.fetch;
+      const origFetch = window.fetch;
       window.fetch = function (...args) {
         const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
         const method = args[1]?.method || "GET";
-
-        return originalFetch.apply(this, args).then((response) => {
-          if (
-            method.toUpperCase() === "POST" &&
-            response.ok &&
-            /submit|complete|finish/i.test(url)
-          ) {
-            log(`📤 Detected submission via fetch`);
-            commitTask(getTaskIdentifier());
-            increment();
-          }
+        return origFetch.apply(this, args).then(response => {
+          try {
+            if (method.toUpperCase() === "POST" && response.ok && /submit|complete|finish/i.test(url)) {
+              log("Detected submission via fetch");
+              commitActiveTask();
+              count++;
+              store(KEYS.COUNT, count);
+              updateDisplay();
+            }
+          } catch (e) { log(e); }
           return response;
         });
       };
     }
 
-    // Intercept XHR
     if (typeof XMLHttpRequest !== "undefined") {
-      const originalOpen = XMLHttpRequest.prototype.open;
-      const originalSend = XMLHttpRequest.prototype.send;
+      const origOpen = XMLHttpRequest.prototype.open;
+      const origSend = XMLHttpRequest.prototype.send;
       const meta = new WeakMap();
 
       XMLHttpRequest.prototype.open = function (method, url, ...rest) {
         meta.set(this, { method, url });
-        return originalOpen.call(this, method, url, ...rest);
+        return origOpen.call(this, method, url, ...rest);
       };
-
       XMLHttpRequest.prototype.send = function (body) {
         this.addEventListener("loadend", function () {
-          const info = meta.get(this);
-          if (
-            info &&
-            info.method.toUpperCase() === "POST" &&
-            this.status >= 200 &&
-            this.status < 300 &&
-            /submit|complete|finish/i.test(info.url)
-          ) {
-            log(`📤 Detected submission via XHR`);
-            commitTask(getTaskIdentifier());
-            increment();
-          }
+          try {
+            const info = meta.get(this);
+            if (info && info.method.toUpperCase() === "POST" && this.status >= 200 && this.status < 300 && /submit|complete|finish/i.test(info.url)) {
+              log("Detected submission via XHR");
+              commitActiveTask();
+              count++;
+              store(KEYS.COUNT, count);
+              updateDisplay();
+            }
+          } catch (e) { log(e); }
         });
-        return originalSend.call(this, body);
+        return origSend.call(this, body);
       };
     }
-
-    return count;
   }
 
   // ============================================================================
-  //                          TRACKING LOOP
+  // TRACKING LOOP
   // ============================================================================
-
-  let currentTaskId = null;
   let lastAWSData = null;
+  let lastTaskIdSeen = null;
 
-  function trackUtilization() {
-    cleanupExpiredTasks();
+  function trackOnce() {
+    window.__SM_SHIELD.pushDom();
+    checkDailyReset();
 
-    const taskId = getTaskIdentifier();
-    const awsData = parseAWSTimer();
+    // Check if we're on a task page and show/hide display accordingly
+    if (isTaskPage()) {
+      display.style.display = "flex";
+    } else {
+      display.style.display = "none";
+      return; // Don't track if not on task page
+    }
 
-    if (!awsData || hasTaskExpired()) {
-      if (currentTaskId && awsData === null) {
-        log(`⚠️ Lost AWS timer signal`);
-      }
-      currentTaskId = null;
+    if (hasTaskExpiredOnPage()) {
+      if (activeTask) discardActiveTask("expired");
+      else setIgnoreTask(getTaskIdFromUrl());
       lastAWSData = null;
+      lastTaskIdSeen = null;
+      updateDisplay();
       return;
     }
 
-    // Log AWS data changes
-    if (!lastAWSData || lastAWSData.current !== awsData.current) {
-      log(`🕐 AWS Timer: ${fmt(awsData.current)} / ${fmt(awsData.limit)}`);
+    const awsData = parseAWSTimer();
+    if (window.__SM_SHIELD.isLikelyVideoNoise() && !awsData) { log("Noise skip"); return; }
+
+    const currentTaskId = getTaskIdFromUrl();
+    const ignoreId = getIgnoreTask();
+    if (ignoreId && ignoreId === currentTaskId) {
+      if (lastAWSData && awsData && awsData.current < lastAWSData.current) { setIgnoreTask(null); log("Clear ignore on reset"); }
+      else { lastAWSData = awsData || lastAWSData; return; }
     }
+
+    if (!awsData) { lastAWSData = null; return; }
+
+    if (!activeTask || activeTask.id !== currentTaskId) startNewTaskFromAWS(awsData);
+    else updateActiveTaskFromAWS(awsData);
+
+    if (typeof awsData.limit === "number" && awsData.current >= awsData.limit) {
+      discardActiveTask("expired");
+    }
+
     lastAWSData = awsData;
-
-    currentTaskId = taskId;
-    createOrUpdateTask(taskId, awsData);
+    lastTaskIdSeen = currentTaskId;
+    updateDisplay();
   }
 
-  // Visibility change handler
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden && currentTaskId) {
-      log(`👁️ Tab hidden`);
-      markTaskAsBackgrounded(currentTaskId);
-    } else if (!document.hidden && currentTaskId) {
-      log(`👁️ Tab visible`);
-    }
-  });
-
-  // Before unload handler
-  window.addEventListener("beforeunload", () => {
-    if (currentTaskId) {
-      log(`🚪 Page unloading`);
-      markTaskAsBackgrounded(currentTaskId);
-    }
-  });
-
   // ============================================================================
-  //                          BUTTON DETECTION
+  // UI: Footer + Dashboard Modal (D1)
   // ============================================================================
-
-  function wireTaskActionButtons() {
-    const selector = 'button, [role="button"], input[type="button"], input[type="submit"]';
-    const btns = document.querySelectorAll(selector);
-
-    btns.forEach((el) => {
-      const raw = (el.innerText || el.value || "").trim().toLowerCase();
-      if (!raw) return;
-
-      const taskId = getTaskIdentifier();
-
-      // Stop/Resume button
-      if ((raw.includes("stop") && raw.includes("resume")) && !el.__sm_pause_bound) {
-        el.__sm_pause_bound = true;
-        el.addEventListener("click", () => {
-          const tasks = getActiveTasks();
-          const task = tasks[taskId];
-          if (task) {
-            if (task.isPaused) {
-              resumeTask(taskId);
-            } else {
-              pauseTask(taskId);
-            }
-            updateDisplay();
-          }
-        });
-      }
-
-      // Release/Decline button
-      if ((raw.includes("release") || raw.includes("decline")) && !el.__sm_discard_bound) {
-        el.__sm_discard_bound = true;
-        el.addEventListener("click", () => {
-          discardTask(taskId, "released");
-          updateDisplay();
-        });
-      }
-
-      // Submit/Complete button
-      if ((raw.includes("submit") || raw.includes("complete")) && !el.__sm_submit_bound) {
-        el.__sm_submit_bound = true;
-        el.addEventListener("click", () => {
-          commitTask(taskId);
-          updateDisplay();
-        });
-      }
-
-      // Skip button
-      if (raw.includes("skip") && !el.__sm_skip_bound) {
-        el.__sm_skip_bound = true;
-        el.addEventListener("click", () => {
-          discardTask(taskId, "skipped");
-          updateDisplay();
-        });
-      }
-    });
-  }
-
-  new MutationObserver(wireTaskActionButtons).observe(document.body, {
-    childList: true,
-    subtree: true,
-  });
-
-  // ============================================================================
-  //                          FOOTER DISPLAY
-  // ============================================================================
-
+  const FOOTER_SELECTORS = ".cswui-footer, .awsui-footer, #footer-root, .awsui-util-pv-xs.cswui-footer";
   const display = document.createElement("div");
   display.id = "sm-utilization";
   Object.assign(display.style, {
-    position: "absolute",
-    left: "12px",
-    top: "50%",
-    transform: "translateY(-50%)",
-    color: "inherit",
-    fontSize: "inherit",
-    fontFamily: "inherit",
-    opacity: "0.88",
-    pointerEvents: "auto",
-    userSelect: "none",
-    whiteSpace: "nowrap",
-    display: "flex",
-    alignItems: "center",
-    gap: "0px",
+    position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)",
+    color: "inherit", fontSize: "inherit", fontFamily: "inherit", opacity: "0.92",
+    pointerEvents: "auto", userSelect: "none", whiteSpace: "nowrap", display: "none",
+    alignItems: "center", gap: "8px", zIndex: 9999
   });
 
   const utilText = document.createTextNode("Utilization: 00:00:00");
   display.appendChild(utilText);
-
   const countLabel = document.createElement("span");
   countLabel.textContent = " | Count: 0";
   display.appendChild(countLabel);
 
-  const statusLabel = document.createElement("span");
-  statusLabel.textContent = "";
-  statusLabel.style.marginLeft = "8px";
-  statusLabel.style.fontSize = "0.9em";
-  display.appendChild(statusLabel);
-
-  // Reset Button
-  const resetBtn = document.createElement("span");
-  resetBtn.textContent = " | 🔄";
-  Object.assign(resetBtn.style, {
-    cursor: "pointer",
-    opacity: "0.85",
-    marginLeft: "8px",
-    color: "#ff6b6b",
-  });
-  resetBtn.title = "Reset counter to 0";
-  resetBtn.onmouseenter = () => {
-    resetBtn.style.opacity = "1";
-    resetBtn.style.color = "#ff4757";
-  };
-  resetBtn.onmouseleave = () => {
-    resetBtn.style.opacity = "0.85";
-    resetBtn.style.color = "#ff6b6b";
-  };
-  resetBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-
-    if (confirm("Reset counter to 0?")) {
-      store(KEYS.COUNT, 0);
-      store(KEYS.LAST_RESET, today());
-      updateDisplay();
-      log("🔄 Counter reset");
-
-      const originalText = resetBtn.textContent;
-      resetBtn.textContent = " | ✅";
-      setTimeout(() => {
-        resetBtn.textContent = originalText;
-      }, 1500);
-    }
-  });
-  display.appendChild(resetBtn);
-
-  function updateDisplay() {
-    const committed = retrieve(KEYS.DAILY_COMMITTED, 0);
-    const tasks = getActiveTasks();
-
-    let totalPending = 0;
-    let status = "";
-
-    for (const taskId in tasks) {
-      const task = tasks[taskId];
-      if (task.status === "active") {
-        const elapsed = getCurrentElapsedSeconds(task);
-        totalPending += elapsed;
-
-        if (task.isPaused) {
-          status = " ⏸️";
-        } else {
-          status = " ▶️";
+  // create modal (D1 Dashboard)
+  function createDashboardModal() {
+    if (document.getElementById("sm-dashboard-root")) return document.getElementById("sm-dashboard-root");
+    const root = document.createElement("div"); root.id = "sm-dashboard-root";
+    root.innerHTML = `
+      <style>
+        /* modal backdrop */
+        #sm-dashboard-root { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 120000; }
+        #sm-db-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+        #sm-db { position: relative; width: 980px; max-width: calc(100% - 48px); max-height: calc(100% - 80px); background: #ffffff; border-radius: 8px; box-shadow: 0 12px 40px rgba(11,18,32,0.6); overflow: hidden; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; color:#0b1220; }
+        #sm-db .header { padding:16px 18px; border-bottom: 1px solid #eef2f6; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+        #sm-db h2 { margin:0; font-size:18px; font-weight:600; }
+        #sm-db .body { display:flex; gap:16px; padding:14px; height:520px; box-sizing:border-box; }
+        #sm-left { width: 420px; display:flex; flex-direction:column; gap:12px; }
+        #sm-right { flex:1; display:flex; flex-direction:column; gap:12px; }
+        .card { background:#f7fbff; border-radius:8px; padding:12px; box-shadow: 0 1px 0 rgba(11,18,32,0.03); }
+        .card .big { font-size:20px; font-weight:700; }
+        .row-cards { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+        /* tabs */
+        .tabs { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+        .tab { padding:8px 10px; border-radius:6px; cursor:pointer; font-size:13px; color:#385a8a; background:transparent; border:1px solid transparent; }
+        .tab.active { background:#eaf3ff; border-color:#d1e9ff; box-shadow: inset 0 -2px 0 rgba(0,0,0,0.02); }
+        /* charts area */
+        #sm-charts { flex:1; background:linear-gradient(180deg,#ffffff,#fbfdff); border-radius:6px; padding:12px; overflow:auto; }
+        #sm-sessions { flex:1; overflow:auto; background:#fff; border-radius:6px; padding:8px; }
+        table.sm-table { width:100%; border-collapse:collapse; font-size:13px; }
+        table.sm-table th, table.sm-table td { padding:8px 6px; border-bottom:1px solid #eef2f6; text-align:left; }
+        .actions { display:flex; gap:8px; }
+        .btn { background:#2b6aa3; color:#fff; padding:6px 10px; border-radius:6px; border:none; cursor:pointer; }
+        .btn.ghost { background:#fff; color:#2b6aa3; border:1px solid #cfe0ff; }
+        .small-muted { color:#6b7a90; font-size:12px; }
+        #sm-footer { padding:12px 16px; border-top:1px solid #eef2f6; display:flex; justify-content:flex-end; gap:8px; background:#fff; }
+        #sm-db-close { cursor:pointer; font-size:18px; color:#385a8a; border:none; background:transparent; }
+        @media (max-width: 1000px) {
+          #sm-db { width: calc(100% - 32px); max-height: calc(100% - 40px); }
+          #sm-left { width: 380px; }
         }
-      }
-    }
+      </style>
 
-    const total = committed + totalPending;
+      <div id="sm-db-backdrop"></div>
+      <div id="sm-db" role="dialog" aria-modal="true">
+        <div class="header">
+          <div style="display:flex; gap:12px; align-items:center;">
+            <h2>SageMaker Utilization — Dashboard</h2>
+            <div class="small-muted">AWS-accurate, paused sessions excluded, expired sessions discarded</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button id="sm-db-close" title="Close">✕</button>
+          </div>
+        </div>
+        <div class="body">
+          <div id="sm-left">
+            <div class="card">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                  <div class="small-muted">Today</div>
+                  <div class="big" id="db-today-time">00:00:00</div>
+                  <div class="small-muted">Submissions: <span id="db-today-count">0</span></div>
+                </div>
+                <div style="text-align:right">
+                  <div class="small-muted">Daily target</div>
+                  <div class="big">${CONFIG.DAILY_ALERT_HOURS}h</div>
+                </div>
+              </div>
+            </div>
 
-    utilText.nodeValue = `Utilization: ${fmt(total)}`;
-    countLabel.textContent = ` | Count: ${retrieve(KEYS.COUNT, 0)}`;
-    statusLabel.textContent = status;
+            <div class="row-cards">
+              <div class="card">
+                <div class="small-muted">Avg time / task</div>
+                <div id="db-avg-task" class="big">00:00</div>
+              </div>
+              <div class="card">
+                <div class="small-muted">This week's total</div>
+                <div id="db-week-total" class="big">00:00:00</div>
+              </div>
+            </div>
+
+            <div class="card" style="flex:1; min-height:200px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div class="small-muted">Recent sessions</div>
+                <div class="small-muted">Showing latest 10</div>
+              </div>
+              <div id="db-recent" style="margin-top:8px; max-height:120px; overflow:auto;"></div>
+            </div>
+          </div>
+
+          <div id="sm-right">
+            <div style="display:flex; gap:8px; align-items:center;">
+              <div class="tabs" id="db-tabs">
+                <div class="tab active" data-tab="overview">Overview</div>
+                <div class="tab" data-tab="charts">Charts</div>
+                <div class="tab" data-tab="tasks">Task Log</div>
+                <div class="tab" data-tab="export">Export</div>
+                <div class="tab" data-tab="settings">Settings</div>
+              </div>
+              <div style="flex:1"></div>
+              <div class="actions">
+                <button class="btn" id="db-export-json">Export JSON</button>
+                <button class="btn ghost" id="db-clear-sessions">Clear</button>
+              </div>
+            </div>
+
+            <div id="db-content" style="flex:1; display:flex; flex-direction:column; gap:8px;">
+              <div id="db-overview" class="card" style="display:block;">
+                <div style="font-weight:600; margin-bottom:8px;">Overview</div>
+                <div id="db-overview-charts" style="display:flex; gap:8px; align-items:flex-end;">
+                  <div style="flex:1;">
+                    <div class="small-muted">30-day utilization</div>
+                    <div id="db-30chart" style="height:140px"></div>
+                  </div>
+                  <div style="width:220px;">
+                    <div class="small-muted">30-day submissions</div>
+                    <div id="db-countchart" style="height:140px"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div id="db-charts-panel" class="card" style="display:none;">
+                <div style="font-weight:600; margin-bottom:8px;">Charts</div>
+                <div id="db-charts" style="height:300px; overflow:auto;"></div>
+              </div>
+
+              <div id="db-tasks-panel" class="card" style="display:none;">
+                <div style="font-weight:600; margin-bottom:8px;">Task Log</div>
+                <div style="max-height:320px; overflow:auto;">
+                  <table class="sm-table" id="db-sessions-table"><thead><tr><th>Date</th><th>Duration</th><th>Action</th><th>Task ID</th></tr></thead><tbody></tbody></table>
+                </div>
+              </div>
+
+              <div id="db-export-panel" class="card" style="display:none;">
+                <div style="font-weight:600; margin-bottom:8px;">Export / Import</div>
+                <div style="display:flex; gap:8px;">
+                  <button class="btn" id="db-export-json2">Export JSON</button>
+                  <button class="btn ghost" id="db-export-csv">Export CSV</button>
+                  <button class="btn ghost" id="db-import-json">Import JSON</button>
+                </div>
+              </div>
+
+              <div id="db-settings-panel" class="card" style="display:none;">
+                <div style="font-weight:600; margin-bottom:8px;">Settings</div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                  <label class="small-muted">Max sessions stored:</label>
+                  <input id="db-max-sessions" type="number" min="100" max="10000" style="width:80px" value="${CONFIG.SESSIONS_LIMIT}">
+                  <button class="btn ghost" id="db-save-settings">Save</button>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+
+        <div id="sm-footer">
+          <div class="small-muted" style="margin-right:auto">Data stored locally: history & session summaries</div>
+          <button class="btn ghost" id="db-close-2">Close</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(root);
+
+    // handlers
+    root.querySelector("#sm-db-backdrop").addEventListener("click", hideDashboard);
+    root.querySelector("#sm-db-close").addEventListener("click", hideDashboard);
+    root.querySelector("#db-close-2").addEventListener("click", hideDashboard);
+
+    root.querySelectorAll("#db-tabs .tab").forEach(t => {
+      t.addEventListener("click", () => {
+        root.querySelectorAll("#db-tabs .tab").forEach(x => x.classList.remove("active"));
+        t.classList.add("active");
+        const tab = t.dataset.tab;
+        root.querySelector("#db-overview").style.display = tab === "overview" ? "block" : "none";
+        root.querySelector("#db-charts-panel").style.display = tab === "charts" ? "block" : "none";
+        root.querySelector("#db-tasks-panel").style.display = tab === "tasks" ? "block" : "none";
+        root.querySelector("#db-export-panel").style.display = tab === "export" ? "block" : "none";
+        root.querySelector("#db-settings-panel").style.display = tab === "settings" ? "block" : "none";
+        refreshDashboardPanels();
+      });
+    });
+
+    root.querySelector("#db-export-json").addEventListener("click", dashboardExportJSON);
+    root.querySelector("#db-export-json2").addEventListener("click", dashboardExportJSON);
+    root.querySelector("#db-export-csv").addEventListener("click", dashboardExportCSV);
+    root.querySelector("#db-import-json").addEventListener("click", dashboardImportJSON);
+    root.querySelector("#db-clear-sessions").addEventListener("click", () => {
+      if (!confirm("Clear all session summaries?")) return;
+      store(KEYS.SESSIONS, []);
+      updateDashboard();
+    });
+    root.querySelector("#db-save-settings").addEventListener("click", () => {
+      const v = Math.max(100, parseInt(root.querySelector("#db-max-sessions").value || CONFIG.SESSIONS_LIMIT));
+      CONFIG.SESSIONS_LIMIT = v;
+      alert("Saved settings (in-memory). New limit will apply to future sessions.");
+    });
+
+    return root;
   }
 
+  function showDashboard() { const root = createDashboardModal(); root.style.display = "flex"; updateDashboard(); }
+  function hideDashboard() { const root = document.getElementById("sm-dashboard-root"); if (root) root.style.display = "none"; }
+
+  // dashboard utilities
+  function getSessions() { return retrieve(KEYS.SESSIONS, []) || []; }
+  function updateDashboard() {
+    const root = createDashboardModal();
+    // update top cards
+    const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+    const count = retrieve(KEYS.COUNT, 0) || 0;
+    root.querySelector("#db-today-time").textContent = fmt(committed);
+    root.querySelector("#db-today-count").textContent = String(count);
+
+    // recent sessions
+    const recentContainer = root.querySelector("#db-recent");
+    recentContainer.innerHTML = "";
+    const sessions = getSessions();
+    const recent = sessions.slice(0, 10);
+    recent.forEach(s => {
+      const el = document.createElement("div");
+      el.style.display = "flex"; el.style.justifyContent = "space-between"; el.style.padding = "6px 4px";
+      el.innerHTML = `<div style="font-size:13px">${new Date(s.date).toLocaleString()}</div><div style="font-weight:600">${fmt(s.duration)}</div><div class="small-muted">${s.action}</div>`;
+      recentContainer.appendChild(el);
+    });
+
+    // avg per task
+    const submittedSessions = sessions.filter(s => s.action === "submitted");
+    const avg = submittedSessions.length ? Math.round(submittedSessions.reduce((a,b)=>a+b.duration,0)/submittedSessions.length) : 0;
+    root.querySelector("#db-avg-task").textContent = fmt(avg);
+
+    // week total
+    const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate()-6);
+    const weekTotal = sessions.filter(s => new Date(s.date) >= weekAgo && s.action === "submitted").reduce((a,b)=>a+b.duration,0);
+    root.querySelector("#db-week-total").textContent = fmt(weekTotal);
+
+    // fill table
+    const tbody = root.querySelector("#db-sessions-table tbody");
+    tbody.innerHTML = "";
+    for (const s of sessions.slice(0, 200)) {
+      const tr = document.createElement("tr");
+      const td1 = document.createElement("td"); td1.textContent = new Date(s.date).toLocaleString();
+      const td2 = document.createElement("td"); td2.textContent = fmt(s.duration);
+      const td3 = document.createElement("td"); td3.textContent = s.action;
+      const td4 = document.createElement("td"); td4.textContent = s.id.substring(0, 28);
+      tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
+      tbody.appendChild(tr);
+    }
+
+    // charts: 30-day utilization & submissions
+    const history = retrieve(KEYS.HISTORY, {}) || {};
+    drawMiniChart(root.querySelector("#db-30chart"), history, { days: CONFIG.MAX_HISTORY_DAYS, color:"#2b6aa3" });
+    drawMiniCountChart(root.querySelector("#db-countchart"), history, { days: CONFIG.MAX_HISTORY_DAYS, color:"#7aa7d9" });
+  }
+
+  function refreshDashboardPanels() {
+    const root = createDashboardModal();
+    // when panels switch, we can refresh heavy areas
+    setTimeout(() => {
+      updateDashboard();
+    }, 80);
+  }
+
+  // mini charts (SVG)
+  function drawMiniChart(container, history, opts={}) {
+    if (!container) return;
+    const days = opts.days || 30;
+    const arr = [];
+    for (let i = days-1; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate()-i); const key = d.toISOString().split("T")[0];
+      arr.push(history[key] || 0);
+    }
+    const w = container.clientWidth || 360, h = container.clientHeight || 120;
+    const maxVal = Math.max(...arr, 3600);
+    const barW = Math.max(2, Math.floor(w/arr.length));
+    let svg = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
+    svg += `<rect width="${w}" height="${h}" fill="transparent"/>`;
+    for (let i=0;i<arr.length;i++){
+      const val = arr[i]; const bh = Math.round((val/maxVal)*(h-24)); const x = i*barW; const y = h-bh-12;
+      const color = opts.color || "#2b6aa3";
+      svg += `<rect x="${x+1}" y="${y}" width="${barW-2}" height="${bh}" fill="${color}" rx="2"></rect>`;
+    }
+    svg += `</svg>`;
+    container.innerHTML = svg;
+  }
+
+  function drawMiniCountChart(container, history, opts={}) {
+    if (!container) return;
+    const days = opts.days || 30;
+    const arr = [];
+    for (let i = days-1; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate()-i); const key = d.toISOString().split("T")[0];
+      const val = (history[key] && typeof history[key] === "number") ? 1 : 0; // using presence as one submission day
+      arr.push(val);
+    }
+    const w = container.clientWidth || 220, h = container.clientHeight || 120;
+    const maxVal = Math.max(...arr, 1);
+    const barW = Math.max(2, Math.floor(w/arr.length));
+    let svg = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">`;
+    svg += `<rect width="${w}" height="${h}" fill="transparent"/>`;
+    for (let i=0;i<arr.length;i++){
+      const val = arr[i]; const bh = Math.round((val/maxVal)*(h-24)); const x = i*barW; const y = h-bh-12;
+      const color = opts.color || "#7aa7d9";
+      svg += `<rect x="${x+1}" y="${y}" width="${barW-2}" height="${bh}" fill="${color}" rx="2"></rect>`;
+    }
+    svg += `</svg>`;
+    container.innerHTML = svg;
+  }
+
+  function dashboardExportJSON() {
+    const payload = {
+      history: retrieve(KEYS.HISTORY, {}),
+      sessions: retrieve(KEYS.SESSIONS, []),
+      daily_committed: retrieve(KEYS.DAILY_COMMITTED, 0) || 0,
+      count: retrieve(KEYS.COUNT, 0) || 0,
+      last_date: retrieve(KEYS.LAST_DATE, null)
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `sagemaker-utilization-export-${todayStr()}.json`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  }
+
+  function dashboardExportCSV() {
+    const sessions = retrieve(KEYS.SESSIONS, []) || [];
+    const rows = [["date","duration_seconds","action","task_id"]];
+    sessions.forEach(s => rows.push([s.date, String(s.duration), s.action, s.id]));
+    const csv = rows.map(r => r.map(cell=>{
+      if (cell == null) return "";
+      const c = String(cell).replace(/"/g,'""');
+      return `"${c}"`;
+    }).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `sagemaker-utilization-sessions-${todayStr()}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  }
+
+  function dashboardImportJSON() {
+    const inp = document.createElement("input"); inp.type = "file"; inp.accept = "application/json";
+    inp.addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = (ev) => {
+        try {
+          const parsed = JSON.parse(ev.target.result);
+          if (parsed.history) store(KEYS.HISTORY, parsed.history);
+          if (parsed.sessions) store(KEYS.SESSIONS, parsed.sessions.slice(0, CONFIG.SESSIONS_LIMIT));
+          if (typeof parsed.daily_committed === "number") store(KEYS.DAILY_COMMITTED, parsed.daily_committed);
+          if (typeof parsed.count === "number") store(KEYS.COUNT, parsed.count);
+          if (parsed.last_date) store(KEYS.LAST_DATE, parsed.last_date);
+          updateDashboard(); updateDisplay(); alert("Import complete");
+        } catch (err) { alert("Invalid JSON"); }
+      };
+      r.readAsText(f);
+    });
+    inp.click();
+  }
+
+  // ============================================================================
+  // Footer attach (fix duplicate button)
+  // ============================================================================
   function attachToFooter() {
-    const footer = document.querySelector(FOOTER_SELECTORS);
+    // Only attach if we're on a task page
+    if (!isTaskPage()) {
+      return;
+    }
+
+    const footer = document.querySelector(FOOTER_SELECTORS) || document.body.querySelector("footer") || document.body;
     if (!footer) return;
+    if (getComputedStyle(footer).position === "static") footer.style.position = "relative";
 
-    if (getComputedStyle(footer).position === "static") {
-      footer.style.position = "relative";
+    // remove duplicate utilization blocks EXCEPT first
+    const existingUtil = document.querySelectorAll("#sm-utilization");
+    if (existingUtil.length > 1) {
+      for (let i = 1; i < existingUtil.length; i++) existingUtil[i].remove();
     }
 
-    const dups = footer.querySelectorAll("#sm-utilization");
-    if (dups.length > 1) {
-      for (let i = 1; i < dups.length; i++) dups[i].remove();
-    }
+    // if our display not in document (or was removed), append to footer
+    if (!footer.contains(display)) footer.appendChild(display);
 
-    if (!footer.contains(display)) {
-      footer.appendChild(display);
-    }
+    // ensure only one log button inside our display
+    const existingBtn = display.querySelector("#sm-log-btn");
+    if (existingBtn) return; // already added
+
+    // create S1-style button
+    const btn = document.createElement("button");
+    btn.id = "sm-log-btn"; btn.type = "button"; btn.title = "Open utilization dashboard";
+    btn.innerHTML = "📊 Log";
+    Object.assign(btn.style, {
+      marginLeft: "8px", padding: "6px 10px", borderRadius: "6px", background: "#ffffff",
+      color: "#0b1220", border: "1px solid #cfcfcf", boxShadow: "none", cursor: "pointer", fontSize: "13px",
+    });
+    btn.addEventListener("mouseenter", () => btn.style.background = "#f5f7fb");
+    btn.addEventListener("mouseleave", () => btn.style.background = "#ffffff");
+    btn.addEventListener("click", showDashboard);
+    display.appendChild(btn);
   }
 
-  let footerAttachTimer = null;
-  function debouncedAttachToFooter() {
-    clearTimeout(footerAttachTimer);
-    footerAttachTimer = setTimeout(attachToFooter, 100);
+  let footerTimer = null;
+  function debouncedAttachFooter() { clearTimeout(footerTimer); footerTimer = setTimeout(attachToFooter, 120); }
+  new MutationObserver(debouncedAttachFooter).observe(document.body, { childList: true, subtree: true });
+
+  // ============================================================================
+  // UPDATE DISPLAY
+  // ============================================================================
+  function updateDisplay() {
+    const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+    let pending = 0;
+    if (activeTask && activeTask.status === "active") pending = activeTask.awsCurrent || 0;
+    else if (activeTask && activeTask.status === "paused") pending = activeTask.awsCurrent || 0;
+    const total = (committed || 0) + (pending || 0);
+    utilText.nodeValue = `Utilization: ${fmt(total)}`;
+    countLabel.textContent = ` | Count: ${retrieve(KEYS.COUNT, 0) || 0}`;
   }
 
-  new MutationObserver(debouncedAttachToFooter).observe(document.body, {
-    childList: true,
-    subtree: true,
+  // ============================================================================
+  // BUTTON WIRING (Stop/Release/Submit/Skip)
+  // ============================================================================
+  function wireTaskActionButtons() {
+    const selector = 'button, [role="button"], input[type="button"], input[type="submit"], a';
+    const btns = document.querySelectorAll(selector);
+    btns.forEach((el) => {
+      try {
+        const raw = (el.innerText || el.value || el.title || "").trim().toLowerCase();
+        if (!raw) return;
+        const id = getTaskIdFromUrl();
+        if ((raw.includes("stop") || raw.includes("pause")) && !el.__sm_pause_bound) {
+          el.__sm_pause_bound = true;
+          el.addEventListener("click", () => {
+            setTimeout(() => {
+              const aws = parseAWSTimer();
+              if (aws && activeTask && activeTask.id === id) { updateActiveTaskFromAWS(aws); updateDisplay(); }
+            }, 600);
+          });
+        }
+        if ((raw.includes("release") || raw.includes("decline") || raw.includes("cancel") || raw.includes("return")) && !el.__sm_discard_bound) {
+          el.__sm_discard_bound = true;
+          el.addEventListener("click", () => { discardActiveTask("released"); updateDisplay(); });
+        }
+        if ((raw.includes("submit") || raw.includes("complete") || raw.includes("finish")) && !el.__sm_submit_bound) {
+          el.__sm_submit_bound = true;
+          el.addEventListener("click", () => { commitActiveTask(); updateDisplay(); });
+        }
+        if (raw.includes("skip") && !el.__sm_skip_bound) {
+          el.__sm_skip_bound = true;
+          el.addEventListener("click", () => { discardActiveTask("skipped"); updateDisplay(); });
+        }
+      } catch (e) {}
+    });
+  }
+  new MutationObserver(wireTaskActionButtons).observe(document.body, { childList: true, subtree: true });
+
+  // ============================================================================
+  // CROSS-TAB SYNC
+  // ============================================================================
+  window.addEventListener("storage", (e) => {
+    if (!e.key) return;
+    if ([KEYS.DAILY_COMMITTED, KEYS.COUNT, KEYS.HISTORY, KEYS.LAST_DATE, KEYS.SESSIONS].includes(e.key)) {
+      log("storage sync", e.key); updateDisplay();
+      const root = document.getElementById("sm-dashboard-root"); if (root && root.style.display === "flex") updateDashboard();
+    }
   });
 
   // ============================================================================
-  //                          CROSS-WINDOW SYNC
+  // INIT
   // ============================================================================
-
-  window.addEventListener('storage', function(e) {
-    if (e.key === KEYS.COUNT || e.key === KEYS.LAST_RESET || e.key === KEYS.ACTIVE_TASKS) {
-      log(`🔄 Storage synced from another tab`);
-      updateDisplay();
-    }
-  });
-
-  // ============================================================================
-  //                          INITIALIZATION
-  // ============================================================================
-
-  log(`🚀 AI-Enhanced Tracker Initializing...`);
-  log(`   Check interval: ${CONFIG.CHECK_INTERVAL_MS}ms`);
-  log(`   Debug mode: ${CONFIG.DEBUG}`);
-
-  initCounter();
-
-  // Main tracking loop
-  setInterval(() => {
-    checkDailyReset();
-    trackUtilization();
-    updateDisplay();
-  }, CONFIG.CHECK_INTERVAL_MS);
-
-  // Cleanup loop
-  setInterval(cleanupExpiredTasks, 30000);
-
-  // Initial setup
+  log("Init");
+  initSubmissionInterceptor();
   attachToFooter();
-  wireTaskActionButtons();
   updateDisplay();
+  setInterval(trackOnce, CONFIG.CHECK_INTERVAL_MS);
 
-  log(`✅ Tracker initialized successfully`);
-  log(`📊 Current count: ${retrieve(KEYS.COUNT, 0)}`);
-  log(`⏱️ Today's utilization: ${fmt(retrieve(KEYS.DAILY_COMMITTED, 0))}`);
+  // keyboard shortcut (works from any page)
+  window.addEventListener("keydown", (e) => { if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "u") showDashboard(); });
+
+  log("Ready");
+
+  // End of script
 })();
