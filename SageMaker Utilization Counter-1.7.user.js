@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         SageMaker Utilization Counter - Dashboard (AWS-style D1)
+// @name         SageMaker Utilization Counter
 // @namespace    http://tampermonkey.net/
 // @version      1.7
 // @description  AWS-accurate + Midnight Reset + Dashboard Reset Only - PVSANKAR
