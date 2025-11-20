@@ -1,279 +1,302 @@
 // ==UserScript==
 // @name         SageMaker Smart-Play
 // @namespace    http://tampermonkey.net/
-// @version      10.1
-// @description  Smart-play visible videos + AWS-themed small toggle UI in MTurk footer.
+// @version      10.2
+// @description  Smart-Play with autoplay + spacebar + footer alignment + auto-update.
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
 // @match        https://mturk-console-template-preview-hooks.s3.amazonaws.com/*
-// @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/smk-smartplay.user.js
-// @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/smk-smartplay.user.js
-// @all-frames   true
 // @run-at       document-end
 // @grant        none
+
+// @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/smk-smartplay.user.js
+// @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/smk-smartplay.user.js
 // ==/UserScript==
 
 (function () {
     'use strict';
 
+    /* ================== CONFIG ================== */
     const STATE_KEY = 'smk_autoPlayEnabled';
     const MSG = '__SMK_AP_SWITCH__';
     const BTN_ID = 'smk-auto-play-toggle';
+    const VERSION = '10.12';
+    const SENDER = `${Date.now()}-${Math.floor(Math.random()*1e9)}`;
+    const MUTATION_DEBOUNCE_MS = 200;
+    const RETRY_TIMEOUT_MS = 1000;
+    const RETRY_ATTEMPTS = 10;
 
-    const getPersisted = () => localStorage.getItem(STATE_KEY) !== 'false';
-    const setPersisted = (on) => localStorage.setItem(STATE_KEY, on ? 'true' : 'false');
+    /* ================ CLEAN OLD NODES ================ */
+    function cleanOld() {
+        ['smk-toggle','sm-utilization','sm-progress-bar','sm-log-btn']
+            .forEach(id=> document.querySelectorAll(`#${id}`).forEach(el=>el.remove()));
 
-    if (typeof window.__SMK_AP_ON === 'undefined') window.__SMK_AP_ON = null;
+        document.querySelectorAll('.smk-left-wrapper').forEach(el=>el.remove());
+    }
 
-    /* ---------------- Cross-frame sync ---------------- */
+    /* ================ STATE ================ */
+    const readPersisted = () => localStorage.getItem(STATE_KEY) !== 'false';
+    const writePersisted = v => localStorage.setItem(STATE_KEY, v ? 'true' : 'false');
+
+    if (typeof window.__SMK_AP_ON === 'undefined')
+        window.__SMK_AP_ON = readPersisted();
+
+    /* ================ CROSS-FRAME SYNC ================ */
+    let lastSeq = 0;
+
     function postState(on) {
-        const payload = { [MSG]: 'STATE', on };
-        try { window.postMessage(payload, '*'); } catch (_) {}
-        document.querySelectorAll('iframe')?.forEach(ifr => {
-            try { ifr.contentWindow?.postMessage(payload, '*'); } catch (_) {}
+        const p = { [MSG]:'STATE', on, sender:SENDER, seq:Date.now(), version:VERSION };
+        window.postMessage(p,'*');
+        document.querySelectorAll('iframe').forEach(ifr=>{
+            try{ ifr.contentWindow.postMessage(p,'*'); }catch(_){}
         });
     }
 
     function requestState() {
-        const payload = { [MSG]: 'REQUEST' };
-        try { window.top?.postMessage(payload, '*'); } catch (_) {}
+        const p = { [MSG]:'REQUEST', sender:SENDER, seq:Date.now(), version:VERSION };
+        window.top?.postMessage(p,'*');
     }
 
-    window.addEventListener('message', (evt) => {
+    window.addEventListener('message', evt=>{
         const d = evt?.data;
         if (!d || !d[MSG]) return;
-        if (d[MSG] === 'STATE' && typeof d.on === 'boolean') {
+        if (d.sender === SENDER) return;
+
+        if (d[MSG] === 'STATE') {
+            if (d.seq && d.seq <= lastSeq) return;
+            lastSeq = d.seq;
+            writePersisted(d.on);
             window.__SMK_AP_ON = d.on;
-            try { setPersisted(d.on); } catch (_) {}
         } else if (d[MSG] === 'REQUEST') {
-            if (window.top === window.self) postState(getPersisted());
+            const rsp = { [MSG]:'STATE', on:readPersisted(), sender:SENDER, seq:Date.now(), version:VERSION };
+            try{ evt.source.postMessage(rsp,'*'); }catch(_){}
+            try{ window.top.postMessage(rsp,'*'); }catch(_){}
         }
     });
 
-
-    /* ---------------- Insert NEW Small AWS-style Smart-Play toggle ---------------- */
-    function insertSwitchInFooter() {
-
-        const footerText = document.querySelector(
-            "p.awsui-util-p-n.awsui-util-t-c.awsui-util-status-info"
-        );
-
-        if (!footerText) return false;
-
-        const footer = footerText.parentElement;
-        if (!footer || document.getElementById(BTN_ID)) return false;
-
-        footer.style.display = "flex";
-        footer.style.alignItems = "center";
-        footer.style.justifyContent = "flex-end";
-
-        const wrap = document.createElement('div');
-        wrap.id = BTN_ID;
-
-        wrap.innerHTML = `
-        <style>
-
-            .smart-toggle {
-                display:flex;
-                align-items:center;
-                cursor:pointer;
-                font-family:sans-serif;
-                font-size:12px;
-                margin-left:8px;
-                user-select:none;
-            }
-
-            .smart-label {
-                margin-right:6px;
-                color:#1a1a1a;
-            }
-
-            /* SMALL AWS toggle */
-            .smart-track {
-                width:36px;
-                height:18px;
-                background:${getPersisted() ? "#4a5a66" : "#c7c7c7"};
-                border-radius:18px;
-                position:relative;
-                transition:background 0.25s;
-            }
-
-            .smart-knob {
-                width:16px;
-                height:16px;
-                background:${getPersisted() ? "#9fb5c1" : "#ffffff"};
-                border-radius:50%;
-                position:absolute;
-                top:1px;
-                left:${getPersisted() ? "19px" : "1px"};
-                transition:left .25s, background .25s;
-                box-shadow:0 1px 2px rgba(0,0,0,0.25);
-            }
-
-        </style>
-
-        <label class="smart-toggle">
-            <span class="smart-label">Smart-Play</span>
-            <div id="switch-track" class="smart-track">
-                <div id="switch-knob" class="smart-knob"></div>
-            </div>
-        </label>
-        `;
-
-        const track = wrap.querySelector("#switch-track");
-        const knob = wrap.querySelector("#switch-knob");
-
-        wrap.addEventListener("click", () => {
-            const next = !getPersisted();
-            setPersisted(next);
-            window.__SMK_AP_ON = next;
-
-            track.style.background = next ? "#4a5a66" : "#c7c7c7";
-            knob.style.left = next ? "19px" : "1px";
-            knob.style.background = next ? "#9fb5c1" : "#ffffff";
-
-            postState(next);
-        });
-
-        footer.appendChild(wrap);
-        return true;
-    }
-
-
-    function ensureSwitch() {
-        if (window.top !== window.self) return;
-        if (!insertSwitchInFooter()) {
-            const int = setInterval(() => {
-                if (insertSwitchInFooter()) clearInterval(int);
-            }, 500);
-        }
-    }
-
-
-    /* ---------------- INIT ---------------- */
-    if (window.top === window.self) {
-        const initTop = () => {
-            ensureSwitch();
-            const on = getPersisted();
-            window.__SMK_AP_ON = on;
-            postState(on);
-        };
-        if (document.readyState === 'complete' || document.readyState === 'interactive')
-            initTop();
-        else
-            window.addEventListener('DOMContentLoaded', initTop, { once: true });
-    } else {
-        requestState();
-    }
-
-
-    /* ---------------- VIDEO AUTOPLAY ENGINE (unchanged) ---------------- */
-    function findVideosDeep(root = document, out = [], seen = new WeakSet()) {
+    /* ================ VIDEO DEEP SCANNER ================ */
+    function findVideosDeep(root=document,out=[],seen=new WeakSet()){
         if (!root || seen.has(root)) return out;
         seen.add(root);
         try {
-            root.querySelectorAll('video')?.forEach(v => out.push(v));
-            root.querySelectorAll('*')?.forEach(el => {
-                if (el.shadowRoot) findVideosDeep(el.shadowRoot, out, seen);
+            root.querySelectorAll('video')?.forEach(v=>out.push(v));
+            root.querySelectorAll('*')?.forEach(el=>{
+                if (el.shadowRoot) findVideosDeep(el.shadowRoot,out,seen);
             });
-            root.querySelectorAll('iframe')?.forEach(ifr => {
-                try {
-                    const idoc = ifr.contentDocument || ifr.contentWindow?.document;
-                    if (idoc) findVideosDeep(idoc, out, seen);
-                } catch (_) {}
+            root.querySelectorAll('iframe')?.forEach(ifr=>{
+                try{
+                    const doc = ifr.contentDocument || ifr.contentWindow?.document;
+                    if (doc) findVideosDeep(doc,out,seen);
+                }catch(_){}
             });
-        } catch (_) {}
+        } catch(_){}
         return out;
     }
 
-    const isVisible = el => {
-        const r = el.getBoundingClientRect();
-        return r.width > 30 && r.height > 30 && r.bottom > 0 && r.right > 0;
+    const isVisible = v => {
+        try{
+            const r = v.getBoundingClientRect();
+            return r.width>30 && r.height>30 && r.bottom>0 && r.right>0;
+        }catch{ return false; }
     };
 
-    const sortByProminence = vids => vids.slice().sort((a, b) => {
-        const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
-        const va = ra.width * ra.height, vb = rb.width * rb.height;
-        const visA = isVisible(a) ? 1 : 0, visB = isVisible(b) ? 1 : 0;
-        if (visB !== visA) return visB - visA;
-        return vb - va;
+    const sortByProminence = vids => vids.slice().sort((a,b)=>{
+        try {
+            const ra=a.getBoundingClientRect(), rb=b.getBoundingClientRect();
+            const va=ra.width*ra.height, vb=rb.width*rb.height;
+            const visA=isVisible(a)?1:0, visB=isVisible(b)?1:0;
+            if (visB!==visA) return visB-visA;
+            return vb-va;
+        } catch { return 0; }
     });
 
-    const playing = v => !v.paused && !v.ended && v.readyState >= 2;
+    /* ================ AUTOPLAY ENGINE ================ */
+    let retryTimer=null;
+    let retryLeft=0;
 
-    async function autoPlayVideo() {
-        const vids = findVideosDeep();
-        if (!vids.length) return;
-        const t = sortByProminence(vids).find(isVisible) || vids[0];
-        if (!t) return;
-        try { await t.play(); }
-        catch { try { t.muted = true; await t.play(); } catch {} }
+    function clearRetry(){ if(retryTimer) clearTimeout(retryTimer); retryTimer=null; }
+
+    function stopAll() {
+        clearRetry();
+        retryLeft=0;
+        findVideosDeep().forEach(v=>{ try{ v.pause(); }catch{} });
     }
 
-    function autoPlayIfEnabled() {
-        if (window.__SMK_AP_ON === true) autoPlayVideo();
-    }
+    async function attemptPlayOnce(){
+        if (!readPersisted()) return { ok:false };
+        const vids=findVideosDeep();
+        if (!vids.length) return { ok:false };
 
-    ['click', 'keydown', 'touchstart'].forEach(evt => {
-        window.addEventListener(evt, unmuteOnInteraction, { once: true, capture: true });
-    });
-
-    function unmuteOnInteraction() {
-        const vids = findVideosDeep();
-        vids.forEach(v => {
-            if (v.muted && !v.paused) {
-                v.muted = false;
-                try { v.play(); } catch {}
+        const v = sortByProminence(vids).find(isVisible) || vids[0];
+        try {
+            await v.play();
+            return { ok:true, v, muted:false };
+        } catch {
+            try {
+                v.muted=true;
+                await v.play();
+                return { ok:true, v, muted:true };
+            } catch {
+                return { ok:false };
             }
-        });
-    }
-
-    function isEditable(el) {
-        if (!el) return false;
-        if (el.isContentEditable) return true;
-        return ['INPUT','TEXTAREA','SELECT'].includes(el.tagName);
-    }
-
-    function isSpaceEvent(e) {
-        return e.code === 'Space' || e.key === ' ' || e.keyCode === 32;
-    }
-
-    async function toggleVideos() {
-        const vids = findVideosDeep();
-        if (!vids.length) return;
-        const somePlaying = vids.some(playing);
-        if (somePlaying) {
-            vids.forEach(v => { try { v.pause(); } catch {} });
-            window.__SMK_AP_ON = false;
-            localStorage.setItem(STATE_KEY, 'false');
-            postState(false);
-        } else {
-            const t = sortByProminence(vids).find(isVisible) || vids[0];
-            try { await t.play(); }
-            catch { try { t.muted = true; await t.play(); } catch {} }
         }
     }
 
-    window.addEventListener('keydown', (e) => {
-        if (!isSpaceEvent(e)) return;
-        if (isEditable(document.activeElement)) return;
-        if (e.ctrlKey || e.altKey || e.metaKey) return;
-        e.preventDefault();
-        e.stopPropagation();
-        toggleVideos();
-    }, { capture: true, passive: false });
+    function tryPlayLoop(n=RETRY_ATTEMPTS){
+        clearRetry();
+        retryLeft=n;
 
-    function tryPlayWithDelay(retries = 10) {
-        autoPlayIfEnabled();
-        if (retries > 0) setTimeout(() => tryPlayWithDelay(retries - 1), 1000);
+        const step=async()=>{
+            if(!readPersisted()) return;
+            const r=await attemptPlayOnce();
+            if(r.ok){ clearRetry(); return; }
+            retryLeft--;
+            if(retryLeft>0) retryTimer=setTimeout(step,RETRY_TIMEOUT_MS);
+        };
+        step();
     }
 
-    if (document.readyState === 'complete' || document.readyState === 'interactive')
-        tryPlayWithDelay();
-    else
-        window.addEventListener('DOMContentLoaded', () => tryPlayWithDelay(), { once: true });
+    function autoPlayIfOn(){ if (readPersisted()) tryPlayLoop(); }
 
-    const mo = new MutationObserver(() => autoPlayIfEnabled());
-    mo.observe(document, { childList: true, subtree: true });
+    /* ================ UNMUTE ON FIRST USER CLICK ================ */
+    ['click','keydown','mousedown','touchstart'].forEach(evt=>{
+        window.addEventListener(evt,()=>{
+            const vids=findVideosDeep();
+            vids.forEach(v=>{
+                if(v.muted && !v.paused){
+                    try{ v.muted=false; v.play().catch(()=>{}); }catch{}
+                }
+            });
+        },{ once:true, capture:true });
+    });
+
+    /* ================ FOOTER TOGGLE ================ */
+    function getFooter(){
+        const p=document.querySelector("p.awsui-util-p-n.awsui-util-t-c.awsui-util-status-info");
+        return p ? p.parentElement : null;
+    }
+
+    function insertToggle(){
+        if (document.getElementById(BTN_ID)) return true;
+
+        const footer=getFooter();
+        if (!footer) return false;
+
+        if (window.getComputedStyle(footer).position === 'static')
+            footer.style.position='relative';
+
+        const box=document.createElement('div');
+        box.id=BTN_ID;
+        box.style.position='absolute';
+        box.style.right='12px';
+        box.style.top='50%';
+        box.style.transform='translateY(-50%)';
+        box.style.display='flex';
+        box.style.alignItems='center';
+        box.style.gap='6px';
+        box.style.fontFamily='sans-serif';
+        box.style.fontSize='12px';
+        box.style.cursor='pointer';
+        box.style.zIndex=99999;
+
+        const on=readPersisted();
+
+        box.innerHTML=`
+            <span>Smart-Play</span>
+            <div id="smk-track" style="
+                width:36px;height:18px;border-radius:18px;
+                background:${on?"#4a5a66":"#ccc"};
+                position:relative;transition:.2s;">
+                <div id="smk-knob" style="
+                    width:16px;height:16px;border-radius:50%;
+                    background:${on?"#9fb5c1":"#fff"};
+                    position:absolute;top:1px;left:${on?"19px":"1px"};
+                    transition:.2s;box-shadow:0 1px 2px rgba(0,0,0,0.3);">
+                </div>
+            </div>
+        `;
+
+        footer.appendChild(box);
+
+        const track=box.querySelector('#smk-track');
+        const knob=box.querySelector('#smk-knob');
+
+        const render=v=>{
+            track.style.background=v?"#4a5a66":"#ccc";
+            knob.style.left=v?"19px":"1px";
+            knob.style.background=v?"#9fb5c1":"#fff";
+        };
+
+        box.addEventListener('click',()=>{
+            const next=!readPersisted();
+            writePersisted(next);
+            window.__SMK_AP_ON=next;
+            render(next);
+            if(!next) stopAll();
+            else autoPlayIfOn();
+            postState(next);
+        });
+
+        return true;
+    }
+
+    /* ================ SPACEBAR SMART MODE ================ */
+    window.addEventListener("keydown", e => {
+        if (e.code !== "Space") return;
+
+        const active = document.activeElement;
+        const typing = (
+            active && (
+                active.tagName === "INPUT" ||
+                active.tagName === "TEXTAREA" ||
+                active.isContentEditable ||
+                (active.tagName === "DIV" && active.getAttribute("role") === "textbox")
+            )
+        );
+
+        if (typing) return;  // don't hijack space in text fields
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        const vids = findVideosDeep();
+        if (!vids.length) return;
+
+        const target = sortByProminence(vids).find(isVisible) || vids[0];
+
+        if (!target) return;
+
+        try {
+            if (target.paused) {
+                target.play().catch(()=>{});
+            } else {
+                target.pause();
+            }
+        } catch(_){}
+    }, true);
+
+    /* ================ MUTATION OBSERVER ================ */
+    let debounce=null;
+    const mo=new MutationObserver(()=>{
+        if(debounce) return;
+        debounce=setTimeout(()=>{
+            debounce=null;
+            insertToggle();
+            if (readPersisted()) autoPlayIfOn();
+        },MUTATION_DEBOUNCE_MS);
+    });
+
+    /* ================ INIT ================ */
+    function init(){
+        cleanOld();
+        insertToggle();
+        if (readPersisted()) autoPlayIfOn();
+        try{ mo.observe(document,{childList:true,subtree:true}); }catch(_){}
+    }
+
+    if (document.readyState==='loading')
+        document.addEventListener('DOMContentLoaded',init);
+    else
+        init();
 
 })();
