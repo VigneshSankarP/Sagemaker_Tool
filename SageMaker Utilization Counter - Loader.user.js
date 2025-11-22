@@ -8,9 +8,9 @@
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/SageMaker%20Utilization%20Counter%20-%20Loader.user.js
 // @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/SageMaker%20Utilization%20Counter%20-%20Loader.user.js
-// @require      https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/dev/sm-core-engine.user.js
-// @require      https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/dev/sm-footer-ui.user.js
-// @require      https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/dev/sm-dashboard.user.js
+// @require https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/dev/sm-core-engine.user.js
+// @require https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/dev/sm-footer-ui.user.js
+// @require https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/dev/sm-dashboard.user.js
 // ==/UserScript==
 
 (function(){ 'use strict'; console.info("SM Loader active — core, footer, dashboard loaded via @require"); })();
