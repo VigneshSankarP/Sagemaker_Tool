@@ -7,9 +7,9 @@
 // @match        https://*.amazonaws.com/*
 // @match        https://*.console.aws.amazon.com/*
 // @grant        none
-// @require      https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/dev/sm-core.user.js
-// @require      https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/dev/sm-footer.user.js
-// @require      https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/dev/sm-dashboard.user.js
+// @require      https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/dev/sm-core.user.js
+// @require      https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/dev/sm-footer.user.js
+// @require      https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/dev/sm-dashboard.user.js
 // ==/UserScript==
 
 (function() {
