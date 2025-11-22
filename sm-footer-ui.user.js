@@ -3,6 +3,11 @@
 // @namespace    sm-utilization
 // @version      1.0-fixed
 // @description  Footer display for SageMaker Utilization (floating footer)
+// @match       https://*.console.aws.amazon.com/*
+// @match       https://*.amazonaws.com/*
+// @grant       none
+// @updateURL   https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/sm-footer-ui.user.js
+// @downloadURL https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/sm-footer-ui.user.js
 // ==/UserScript==
 
 (function() {
