@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SM Test Loader (Dev Branch)
 // @namespace    sm-utilization
-// @version      1.0-test
-// @description  Loads core, footer, dashboard from dev folder for testing
+// @version      1.0-dev
+// @description  Loads core, footer, and dashboard from the dev branch for testing
 // @match        https://*.sagemaker.aws/*
 // @match        https://*.amazonaws.com/*
 // @match        https://*.console.aws.amazon.com/*
@@ -13,5 +13,5 @@
 // ==/UserScript==
 
 (function() {
-    console.log("%cSM TEST LOADER ACTIVE", "color: orange; font-weight: bold;");
+    console.log("%c[SM TEST LOADER ACTIVE]", "color: orange; font-weight: bold; font-size: 14px");
 })();
