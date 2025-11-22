@@ -1,88 +1,97 @@
 // ==UserScript==
-// @name        SM - Footer UI (floating footer, UI-only)
-// @namespace   https://github.com/VigneshSankarP/Sagemaker_Tool
-// @version     1.0.0
-// @description Footer UI (reads from SM_API). No timer logic here.
-// @match       https://*.console.aws.amazon.com/*
-// @match       https://*.amazonaws.com/*
-// @grant       none
-// @updateURL   https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/sm-footer-ui.user.js
-// @downloadURL https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/sm-footer-ui.user.js
+// @name         SM - Footer UI (floating footer, UI-only)
+// @namespace    sm-utilization
+// @version      1.0-fixed
+// @description  Footer display for SageMaker Utilization (floating footer)
 // ==/UserScript==
 
-(function(){
-  'use strict';
+(function() {
+    'use strict';
 
-  const display = document.createElement('div');
-  display.id = 'sm-utilization';
-  Object.assign(display.style, {
-    position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)',
-    color: 'inherit', fontSize: 'inherit', fontFamily: 'inherit', opacity: '0.92',
-    pointerEvents: 'auto', userSelect: 'none', whiteSpace: 'nowrap', display: 'none',
-    alignItems: 'center', gap: '8px', zIndex: 9999
-  });
-
-  const utilText = document.createTextNode('Utilization: 00:00:00');
-  display.appendChild(utilText);
-  const countLabel = document.createElement('span');
-  countLabel.textContent = ' | Count: 0';
-  display.appendChild(countLabel);
-
-  function attachToFooter() {
-    const footer = document.querySelector('footer') || document.body;
-    if (!footer) return;
-    if (getComputedStyle(footer).position === 'static') footer.style.position = 'relative';
-    if (!footer.contains(display)) footer.appendChild(display);
-    const existingBtn = display.querySelector('#sm-log-btn');
-    if (!existingBtn) {
-      const btn = document.createElement('button');
-      btn.id = 'sm-log-btn'; btn.type = 'button'; btn.title = 'Open utilization dashboard';
-      btn.innerHTML = '📊 Log';
-      Object.assign(btn.style, {
-        marginLeft: '8px', padding: '6px 10px', borderRadius: '6px', background: '#ffffff',
-        color: '#0b1220', border: '1px solid #cfcfcf', boxShadow: 'none', cursor: 'pointer', fontSize: '13px',
-      });
-      btn.addEventListener('mouseenter', () => btn.style.background = '#f5f7fb');
-      btn.addEventListener('mouseleave', () => btn.style.background = '#ffffff');
-      btn.addEventListener('click', ()=> { if (typeof window.SM_UI_showDashboard === 'function') window.SM_UI_showDashboard(); else showDashboard_local(); });
-      display.appendChild(btn);
+    // Wait until SM_API exists
+    function whenReady(fn) {
+        if (window.SM_API) fn();
+        else setTimeout(() => whenReady(fn), 50);
     }
-  }
 
-  function showDashboard_local(){ try { if (typeof window.SM_UI_showDashboard === 'function') window.SM_UI_showDashboard(); else if (typeof window.SM_openDashboard === 'function') window.SM_openDashboard(); else { const raw = 'https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/sm-dashboard.user.js'; window.open(raw, '_blank'); } } catch(e){} }
+    whenReady(() => {
+        console.log("SM Footer UI Loaded");
 
-  function updateDisplay_local() {
-    try {
-      if (!window.SM_API) return;
-      const data = window.SM_API.getData();
-      const committed = data.committed || 0;
-      const pending = data.pending || 0;
-      const total = committed + pending;
-      utilText.nodeValue = `Utilization: ${fmt(total)}`;
-      countLabel.textContent = ` | Count: ${data.count || 0}`;
-    } catch(e){}
-  }
+        // --- CREATE FLOATING FOOTER ---
+        const display = document.createElement("div");
+        display.id = "sm-utilization";
 
-  function fmt(seconds) {
-    seconds = Math.max(0, Math.floor(+seconds || 0));
-    const h = Math.floor(seconds/3600);
-    const m = Math.floor((seconds%3600)/60);
-    const s = seconds%60;
-    return [h,m,s].map(n=>String(n).padStart(2,'0')).join(':');
-  }
+        Object.assign(display.style, {
+            position: "fixed",
+            left: "12px",
+            bottom: "12px",                     // <--- FIXED: always bottom
+            zIndex: "2147483647",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "6px 8px",
+            borderRadius: "6px",
+            background: "rgba(0,0,0,0.72)",
+            color: "#ffffff",
+            fontSize: "14px",
+            fontFamily: "sans-serif",
+            opacity: 1,
+            pointerEvents: "auto",
+        });
 
-  window.SM_UI_setVisible = function(visible) {
-    try { display.style.display = visible ? 'flex' : 'none'; } catch(e){}
-  };
+        // Attach to BODY (universal, works everywhere)
+        document.body.appendChild(display);
 
-  window.SM_UI_showDashboard = function(){ try { if (typeof window.SM_UI_show === 'function') window.SM_UI_show(); else showDashboard_local(); } catch(e){} };
+        // --- ELEMENTS ---
+        const txt = document.createElement("span");
+        txt.textContent = "Utilization: --:--:-- | Count: 0";
 
-  window.SM_UI_updateDisplay = updateDisplay_local;
-  window.addEventListener('sm_core_update', updateDisplay_local);
+        const btn = document.createElement("button");
+        btn.textContent = "Log";
+        Object.assign(btn.style, {
+            padding: "3px 6px",
+            cursor: "pointer",
+            borderRadius: "4px",
+            border: "1px solid #fff",
+            background: "rgba(255,255,255,0.15)",
+            color: "#fff",
+        });
 
-  const attachTimer = setInterval(()=>{ try{ attachToFooter(); updateDisplay_local(); }catch(e){} }, 800);
-  new MutationObserver(()=>{ try{ attachToFooter(); }catch(e){} }).observe(document.body, { childList:true, subtree:true });
+        btn.onclick = () => {
+            if (window.SM_UI_showDashboard) window.SM_UI_showDashboard();
+            else alert("Dashboard not loaded.");
+        };
 
-  window.addEventListener('keydown', (e)=>{ if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'u') { try { if (typeof window.SM_UI_showDashboard === 'function') window.SM_UI_showDashboard(); } catch(e){} } });
+        display.appendChild(txt);
+        display.appendChild(btn);
 
+        // --- API: update footer text ---
+        window.SM_UI_updateDisplay = function(state) {
+            try {
+                const dur = formatDuration(state.totalCommitted || 0);
+                const count = state.count ?? 0;
+                txt.textContent = `Utilization: ${dur} | Count: ${count}`;
+            } catch (e) { console.error("Footer update failed", e); }
+        };
+
+        // --- API: control visibility ---
+        window.SM_UI_setVisible = function(visible) {
+            display.style.display = visible ? "flex" : "none";
+        };
+
+        // --- Helper ---
+        function formatDuration(sec) {
+            const h = Math.floor(sec / 3600).toString().padStart(2, "0");
+            const m = Math.floor((sec % 3600) / 60).toString().padStart(2, "0");
+            const s = Math.floor(sec % 60).toString().padStart(2, "0");
+            return `${h}:${m}:${s}`;
+        }
+
+        // --- Subscribe to updates ---
+        SM_API.onUpdate((state) => window.SM_UI_updateDisplay(state));
+
+        // Force initial state
+        window.SM_UI_updateDisplay(SM_API.getData());
+        window.SM_UI_setVisible(true);
+    });
 })();
