@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sagemaker Utilization Counter
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      4
 // @description  Ultra Premium Dashboard with AI Protection Engine - No Toast Notifications
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
