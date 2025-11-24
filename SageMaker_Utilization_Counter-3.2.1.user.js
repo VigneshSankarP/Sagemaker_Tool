@@ -12,8 +12,8 @@
 // @run-at       document-idle
 // @homepageURL  https://github.com/VigneshSankarP/Sagemaker_Tool
 // @supportURL   https://github.com/VigneshSankarP/Sagemaker_Tool/issues
-// @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/SageMaker_Utilization_Counter-3.2.1.meta.js
-// @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/SageMaker_Utilization_Counter-3.2.1.user.js
+// @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/SageMaker%20Utilization%20Counter-1.7.user.js
+// @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/SageMaker%20Utilization%20Counter-1.7.user.js
 // ==/UserScript==
 
 (function () {
