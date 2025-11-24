@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         SageMaker U+C+D - AI Enhanced (No Toast)
+// @name         SageMaker Utilization Counter
 // @namespace    http://tampermonkey.net/
 // @version      3.2.1-fixed-no-toast
 // @description  Ultra Premium Dashboard with AI Protection Engine - No Toast Notifications
@@ -12,8 +12,8 @@
 // @run-at       document-idle
 // @homepageURL  https://github.com/VigneshSankarP/Sagemaker_Tool
 // @supportURL   https://github.com/VigneshSankarP/Sagemaker_Tool/issues
-// @updateURL    https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.7.user.js
-// @downloadURL  https://github.com/VigneshSankarP/Sagemaker_Tool/raw/refs/heads/main/SageMaker%20Utilization%20Counter-1.7.user.js
+// @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/SageMaker%20Utilization%20Counter-1.7.user.js
+// @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/SageMaker%20Utilization%20Counter-1.7.user.js
 // ==/UserScript==
 
 (function () {
