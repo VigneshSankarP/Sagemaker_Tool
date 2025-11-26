@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sagemaker Utilization Counter
 // @namespace    http://tampermonkey.net/
-// @version      3.8
+// @version      4
 // @description  Dashboard - Optimized for 8+ Hour Sessions
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
@@ -18,6 +18,23 @@
 
 (function () {
   'use strict';
+(function() {
+    if (!window.__SAGEMAKER__) {
+      window.__SAGEMAKER__ = {
+        version: '1.0',
+        scripts: {},
+        getFooter() {
+          const p = document.querySelector("p.awsui-util-p-n.awsui-util-t-c.awsui-util-status-info");
+          if (p?.parentElement) return p.parentElement;
+          return document.querySelector('.cswui-footer, .awsui-footer, footer, [role="contentinfo"]');
+        },
+        checkHealth() {
+          console.log('🔍 SageMaker Scripts Status:', this.scripts);
+          return this.scripts;
+        }
+      };
+    }
+  })();
 
   if (window.__SM_TIMER_RUNNING__) return;
   window.__SM_TIMER_RUNNING__ = true;
@@ -1322,9 +1339,10 @@ homeFloatingIcon.innerHTML = `
     }
   }
 
-  function attachToFooter() {
+    function attachToFooter() {
     if (!isTaskPage()) return;
-    const footer = document.querySelector('.cswui-footer, .awsui-footer, footer') || document.body;
+    const footer = window.__SAGEMAKER__.getFooter() || document.body;
+    window.__SAGEMAKER__.scripts.utilizationCounter = !!footer;
     if (!footer) return;
     if (getComputedStyle(footer).position === 'static') footer.style.position = 'relative';
     if (!footer.contains(display)) footer.appendChild(display);
@@ -2035,7 +2053,7 @@ homeFloatingIcon.innerHTML = `
     }, 3000);
   }
 
-  // Initial setup
+    // Initial setup
   setTimeout(() => {
     try {
       attachToFooter();
@@ -2043,6 +2061,10 @@ homeFloatingIcon.innerHTML = `
       updateDisplay();
       updateHomeFloatingIcon();
       log('✅ Sagemaker Utilization Counter initialized (Ultra-Stable Version with Auto-Update)');
+
+      // ===== ADD THIS LINE START =====
+      setTimeout(() => window.__SAGEMAKER__.checkHealth(), 2000);
+      // ===== ADD THIS LINE END =====
     } catch (e) {
       console.error('[SM] Initialization error:', e);
     }
