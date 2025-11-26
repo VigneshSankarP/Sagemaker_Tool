@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Sagemaker Utilization Counter
 // @namespace    http://tampermonkey.net/
-// @version      3.2.1
-// @description  Ultra Premium Dashboard with AI Protection Engine - No Toast Notifications
+// @version      3.7.5
+// @description  Dashboard - Optimized for 8+ Hour Sessions
 // @author       PVSANKAR
 // @homepageURL  https://github.com/VigneshSankarP/Sagemaker_Tool
 // @supportURL   https://github.com/VigneshSankarP/Sagemaker_Tool/issues
