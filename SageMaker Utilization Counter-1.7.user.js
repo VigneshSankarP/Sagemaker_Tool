@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sagemaker Utilization Counter
 // @namespace    http://tampermonkey.net/
-// @version      3.7.5
+// @version      3.8
 // @description  Dashboard - Optimized for 8+ Hour Sessions
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
@@ -84,8 +84,8 @@
     TASK_NAME_RETRY_ATTEMPTS: 3,
     TASK_NAME_RETRY_DELAY: 500,
     MUTATION_OBSERVER_THROTTLE: 1000,
-    BACKWARD_TIMER_THRESHOLD: 5, // seconds
-    BODY_TEXT_CACHE_MS: 500 // NEW: Body text caching
+    BACKWARD_TIMER_THRESHOLD: 5,
+    BODY_TEXT_CACHE_MS: 500
   };
 
   const KEYS = {
@@ -100,10 +100,201 @@
     ANALYTICS: 'sm_analytics',
     LAST_BACKUP: 'sm_last_backup',
     PREFERENCES: 'sm_preferences',
-    AUTO_BACKUP: 'sm_auto_backup'
+    AUTO_BACKUP: 'sm_auto_backup',
+    UPDATE_AVAILABLE: 'sm_update_available',
+    LAST_UPDATE_CHECK: 'sm_last_update_check'
   };
 
   function log(...args) { if (CONFIG.DEBUG) console.log('[SM]', ...args); }
+
+  // ---------------------------------------------------------------------------
+  // Auto-Update System
+  // ---------------------------------------------------------------------------
+  const UPDATE_CONFIG = {
+    CHECK_ON_STARTUP: true,
+    CHECK_INTERVAL_HOURS: 24,
+    NOTIFY_UPDATES: true,
+    AUTO_REDIRECT: false
+  };
+
+  function checkForUpdates(silent = false) {
+    try {
+      if (typeof GM === 'undefined' || !GM.info) {
+        if (!silent) log('GM API not available for update check');
+        return;
+      }
+
+      const CURRENT_VERSION = GM.info.script.version;
+      const UPDATE_URL = GM.info.script.updateURL || GM.info.script.downloadURL;
+      const DOWNLOAD_URL = GM.info.script.downloadURL;
+
+      if (!UPDATE_URL || !DOWNLOAD_URL) {
+        if (!silent) log('No update URLs configured');
+        return;
+      }
+
+      log('🔍 Checking for updates... Current version:', CURRENT_VERSION);
+
+      fetch(UPDATE_URL + '?t=' + Date.now())
+        .then(response => response.text())
+        .then(text => {
+          const match = text.match(/@version\s+([0-9.]+)/);
+          if (!match) {
+            if (!silent) log('Could not parse version from remote script');
+            return;
+          }
+
+          const REMOTE_VERSION = match[1];
+          log('Remote version:', REMOTE_VERSION);
+
+          if (REMOTE_VERSION !== CURRENT_VERSION) {
+            log(`🎉 New version available: ${REMOTE_VERSION} (current: ${CURRENT_VERSION})`);
+
+            store(KEYS.UPDATE_AVAILABLE, {
+              version: REMOTE_VERSION,
+              currentVersion: CURRENT_VERSION,
+              downloadUrl: DOWNLOAD_URL,
+              checkedAt: new Date().toISOString()
+            });
+
+            if (UPDATE_CONFIG.NOTIFY_UPDATES) {
+              showUpdateNotification(REMOTE_VERSION, CURRENT_VERSION, DOWNLOAD_URL);
+            }
+
+            if (UPDATE_CONFIG.AUTO_REDIRECT) {
+              setTimeout(() => {
+                if (confirm(`New version ${REMOTE_VERSION} is available! Update now?`)) {
+                  window.location.href = DOWNLOAD_URL;
+                }
+              }, 2000);
+            }
+          } else {
+            log('✅ Script is up to date');
+            store(KEYS.UPDATE_AVAILABLE, null);
+            store(KEYS.LAST_UPDATE_CHECK, new Date().toISOString());
+          }
+        })
+        .catch(err => {
+          if (!silent) console.error('[SM] Update check failed:', err);
+        });
+    } catch (e) {
+      if (!silent) console.error('[SM] Update check error:', e);
+    }
+  }
+
+  function showUpdateNotification(newVersion, currentVersion, downloadUrl) {
+    const existing = document.getElementById('sm-update-notification');
+    if (existing) existing.remove();
+
+    const notification = document.createElement('div');
+    notification.id = 'sm-update-notification';
+    notification.innerHTML = `
+      <style>
+        #sm-update-notification {
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          width: 320px;
+          background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+          color: white;
+          padding: 16px;
+          border-radius: 12px;
+          box-shadow: 0 10px 40px rgba(16, 185, 129, 0.4);
+          z-index: 9999999;
+          font-family: system-ui, -apple-system, sans-serif;
+          animation: slideInRight 0.4s ease-out;
+        }
+        @keyframes slideInRight {
+          from { transform: translateX(400px); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+        #sm-update-notification .update-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 12px;
+          font-weight: 700;
+          font-size: 16px;
+        }
+        #sm-update-notification .update-body {
+          font-size: 13px;
+          margin-bottom: 12px;
+          opacity: 0.95;
+        }
+        #sm-update-notification .update-version {
+          background: rgba(255, 255, 255, 0.2);
+          padding: 4px 8px;
+          border-radius: 6px;
+          font-family: monospace;
+          font-weight: 700;
+        }
+        #sm-update-notification .update-actions {
+          display: flex;
+          gap: 8px;
+          margin-top: 12px;
+        }
+        #sm-update-notification button {
+          flex: 1;
+          padding: 8px 12px;
+          border: none;
+          border-radius: 6px;
+          cursor: pointer;
+          font-weight: 600;
+          font-size: 13px;
+          transition: all 0.2s;
+        }
+        #sm-update-notification .btn-update {
+          background: white;
+          color: #059669;
+        }
+        #sm-update-notification .btn-update:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(255, 255, 255, 0.3);
+        }
+        #sm-update-notification .btn-dismiss {
+          background: rgba(255, 255, 255, 0.2);
+          color: white;
+        }
+        #sm-update-notification .btn-dismiss:hover {
+          background: rgba(255, 255, 255, 0.3);
+        }
+      </style>
+      <div class="update-header">
+        <span style="font-size: 24px;">🚀</span>
+        <span>Update Available!</span>
+      </div>
+      <div class="update-body">
+        A new version of Sagemaker Utilization Counter is available!
+        <div style="margin-top: 8px;">
+          <span class="update-version">${sanitizeHTML(currentVersion)}</span>
+          <span style="margin: 0 8px;">→</span>
+          <span class="update-version">${sanitizeHTML(newVersion)}</span>
+        </div>
+      </div>
+      <div class="update-actions">
+        <button class="btn-update" id="sm-update-now">Update Now</button>
+        <button class="btn-dismiss" id="sm-update-dismiss">Later</button>
+      </div>
+    `;
+
+    document.body.appendChild(notification);
+
+    const autoDismiss = setTimeout(() => {
+      notification.style.animation = 'slideInRight 0.3s ease-in reverse';
+      setTimeout(() => notification.remove(), 300);
+    }, 15000);
+
+    notification.querySelector('#sm-update-now').addEventListener('click', () => {
+      clearTimeout(autoDismiss);
+      window.location.href = downloadUrl;
+    });
+
+    notification.querySelector('#sm-update-dismiss').addEventListener('click', () => {
+      clearTimeout(autoDismiss);
+      notification.style.animation = 'slideInRight 0.3s ease-in reverse';
+      setTimeout(() => notification.remove(), 300);
+    });
+  }
 
   // NEW: Body text caching for performance
   let bodyTextCache = { text: '', timestamp: 0 };
@@ -133,7 +324,6 @@
         try {
           const sessions = retrieve(KEYS.SESSIONS, []);
           if (sessions.length > 100) {
-            // Smart trimming - keep recent + submitted tasks
             const cutoffDate = new Date();
             cutoffDate.setDate(cutoffDate.getDate() - 30);
             const cutoffISO = cutoffDate.toISOString();
@@ -232,7 +422,6 @@
     };
   }
 
-  // Global error handler
   window.addEventListener('error', (e) => {
     console.error('[SM Global Error]', e.error);
     updateAnalytics('error', { message: e.message, filename: e.filename, lineno: e.lineno });
@@ -273,10 +462,8 @@
         clearTaskNameCache();
       }
 
-      // OPTIMIZED: Use cached body text
       const bodyText = getBodyText();
 
-      // Method 1: Look for "Task description:" pattern
       let match = bodyText.match(/Task description:\s*([^\n]+)/i);
       if (match && match[1] && match[1].trim().length > 5 && match[1].trim().length < 200) {
         const detectedName = match[1].trim();
@@ -285,7 +472,6 @@
         return detectedName;
       }
 
-      // Method 2: Look for specific AWS Sagemaker selectors
       const selectors = [
         'p.awsui-util-d-ib',
         '.awsui-util-d-ib',
@@ -314,7 +500,6 @@
         }
       }
 
-      // Method 3: Extract from URL if possible
       const taskParam = new URLSearchParams(window.location.search).get('task');
       if (taskParam && taskParam.length > 5) {
         const detectedName = `Task: ${taskParam}`;
@@ -323,7 +508,6 @@
         return detectedName;
       }
 
-      // Fallback
       const fallbackName = `Task-${currentTaskId.substring(Math.max(0, currentTaskId.length - 8))}`;
       taskNameCache = { taskId: currentTaskId, name: fallbackName, timestamp: now };
       log('Task name fallback:', fallbackName);
@@ -363,7 +547,6 @@
     };
   })();
 
-  // OPTIMIZED: Uses cached body text
   function parseAWSTimer() {
     try {
       const bodyText = getBodyText();
@@ -380,7 +563,6 @@
     } catch (e) { log('parseAWSTimer err', e); return null; }
   }
 
-  // OPTIMIZED: Uses cached body text
   function hasTaskExpiredOnPage() {
     try {
       const t = getBodyText().toLowerCase();
@@ -480,8 +662,11 @@
   }
 
   function runDiagnostics() {
+    const updateInfo = retrieve(KEYS.UPDATE_AVAILABLE);
     const diag = {
       version: '3.7-ultra-stable',
+      update_available: updateInfo?.version || 'No',
+      last_update_check: retrieve(KEYS.LAST_UPDATE_CHECK) || 'Never',
       localStorage_size: (JSON.stringify(localStorage).length / 1024).toFixed(2) + ' KB',
       localStorage_percent: ((JSON.stringify(localStorage).length / (5 * 1024 * 1024)) * 100).toFixed(1) + '%',
       active_task: activeTask ? 'Yes (' + fmt(activeTask.awsCurrent) + ')' : 'No',
@@ -509,6 +694,7 @@
     console.log('✓ Task name cache:', taskNameCache.name ? 'CACHED' : 'EMPTY');
     console.log('✓ Body text cache:', bodyTextCache.text ? 'ACTIVE' : 'EMPTY');
     console.log('✓ Home floating icon:', !!document.getElementById('sm-home-floating-icon'));
+    console.log('✓ Update available:', updateInfo ? `Yes (v${updateInfo.version})` : 'No');
 
     const analytics = retrieve(KEYS.ANALYTICS, {});
     if (analytics && Object.keys(analytics).length > 0) {
@@ -596,7 +782,7 @@
   // Reset functions
   // ---------------------------------------------------------------------------
   let resetInProgress = false;
-  let lastResetTime = 0; // NEW: Debounce reset
+  let lastResetTime = 0;
 
   function performReset(resetType = 'both', source = 'manual') {
     if (resetInProgress) return false;
@@ -843,7 +1029,7 @@
         return true;
       }
 
-      const bodyText = getBodyText(); // OPTIMIZED: Use cached text
+      const bodyText = getBodyText();
       if (bodyText.includes('Jobs (') || bodyText.includes('Task title') || bodyText.includes('Customer ID')) {
         return true;
       }
@@ -984,7 +1170,6 @@ homeFloatingIcon.innerHTML = `
       }
     }
 
-    /* Responsive design */
     @media (max-width: 768px) {
       #sm-home-floating-icon {
         min-width: 140px;
@@ -1229,19 +1414,16 @@ homeFloatingIcon.innerHTML = `
     }
   }
 
-  // OPTIMIZED: Better event listener management
   function wireTaskActionButtons() {
     try {
       const btns = document.querySelectorAll('button, [role="button"]');
       btns.forEach((el) => {
         try {
-          // Skip if already processed
           if (el.getAttribute('data-sm-id')) return;
 
           const raw = (el.innerText || '').toLowerCase();
           if (!raw) return;
 
-          // Mark as processed FIRST
           const btnId = `btn_${Date.now()}_${Math.random()}`;
           el.setAttribute('data-sm-id', btnId);
 
@@ -1403,6 +1585,8 @@ homeFloatingIcon.innerHTML = `
     const todayTasks = aggregateTodayTaskData();
     const todaySessions = getTodaySessions();
     const last7Days = getLast7DaysData();
+    const updateInfo = retrieve(KEYS.UPDATE_AVAILABLE);
+    const lastCheck = retrieve(KEYS.LAST_UPDATE_CHECK);
 
     root.innerHTML = `
       <style>
@@ -1410,9 +1594,11 @@ homeFloatingIcon.innerHTML = `
         .dashboard-container{max-width:1600px;margin:20px auto;padding:20px;background:rgba(255,255,255,0.95);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.3)}
         .dashboard-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:16px;border-bottom:2px solid #e5e7eb}
         .dashboard-title{font-size:24px;font-weight:800;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+        .update-badge{background:linear-gradient(135deg,#10b981,#059669);color:white;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:700;animation:pulse 2s infinite;margin-left:12px}
         .btn{padding:8px 16px;border-radius:8px;border:none;cursor:pointer;font-weight:600;transition:all 0.2s;font-size:14px}
         .btn:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,0.15)}
         .btn-primary{background:linear-gradient(135deg,#8b5cf6,#6366f1);color:white}
+        .btn-success{background:linear-gradient(135deg,#10b981,#059669);color:white}
         .btn-danger{background:#ef4444;color:white}
         .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px}
         .stat-card{padding:16px;background:white;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.08);transition:transform 0.2s}
@@ -1441,8 +1627,13 @@ homeFloatingIcon.innerHTML = `
       </style>
       <div class="dashboard-container">
         <div class="dashboard-header">
-          <div class="dashboard-title">🤖 Sagemaker Dashboard <span style="font-size:12px;color:#6b7280">(Ultra-Stable)</span></div>
-          <div style="display:flex;gap:8px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div class="dashboard-title">🤖 Sagemaker Dashboard <span style="font-size:12px;color:#6b7280">(v3.7)</span></div>
+            ${updateInfo ? `<div class="update-badge">🚀 v${sanitizeHTML(updateInfo.version)} Available</div>` : ''}
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${updateInfo ? `<button id="update-now-btn" class="btn btn-success">🚀 Update Now</button>` : ''}
+            <button id="check-updates-btn" class="btn btn-primary">🔄 Check Updates</button>
             <button id="reset-btn" class="btn btn-primary">🔄 Reset</button>
             <button id="diagnostics-btn" class="btn btn-primary">🔍 Diagnostics</button>
             <button id="close-dashboard" class="btn btn-danger">✕ Close</button>
@@ -1559,6 +1750,31 @@ homeFloatingIcon.innerHTML = `
       runDiagnostics();
     });
 
+    const checkUpdatesBtn = root.querySelector('#check-updates-btn');
+    if (checkUpdatesBtn) {
+      checkUpdatesBtn.addEventListener('click', () => {
+        checkUpdatesBtn.textContent = '🔄 Checking...';
+        checkUpdatesBtn.disabled = true;
+        checkForUpdates(false);
+        setTimeout(() => {
+          checkUpdatesBtn.textContent = '✓ Checked';
+          setTimeout(() => {
+            checkUpdatesBtn.textContent = '🔄 Check Updates';
+            checkUpdatesBtn.disabled = false;
+          }, 2000);
+        }, 1000);
+      });
+    }
+
+    const updateNowBtn = root.querySelector('#update-now-btn');
+    if (updateNowBtn && updateInfo) {
+      updateNowBtn.addEventListener('click', () => {
+        if (confirm(`Update to version ${updateInfo.version}?\n\nYour data will be preserved.`)) {
+          window.location.href = updateInfo.downloadUrl;
+        }
+      });
+    }
+
     const escHandler = (e) => {
       if (e.key === 'Escape') {
         root.remove();
@@ -1603,10 +1819,9 @@ homeFloatingIcon.innerHTML = `
   }
 
   // ---------------------------------------------------------------------------
-  // Reset dialog UI (NEW: Debounced)
+  // Reset dialog UI
   // ---------------------------------------------------------------------------
   function showResetDialog() {
-    // NEW: Debounce to prevent spam clicks
     const now = Date.now();
     if (now - lastResetTime < 1000) {
       console.log('[SM] Please wait before opening reset dialog again');
@@ -1712,7 +1927,7 @@ homeFloatingIcon.innerHTML = `
       if (url.includes('/task') || url.includes('/labeling') || path.includes('/task')) return true;
       const awsTimer = parseAWSTimer();
       if (awsTimer) return true;
-      const bodyText = getBodyText().toLowerCase(); // OPTIMIZED
+      const bodyText = getBodyText().toLowerCase();
       if (bodyText.includes('task time') || bodyText.includes('task description')) return true;
       return false;
     } catch (e) {
@@ -1807,6 +2022,19 @@ homeFloatingIcon.innerHTML = `
   // Start adaptive tracking
   adaptiveTrack();
 
+  // Check for updates on startup
+  if (UPDATE_CONFIG.CHECK_ON_STARTUP) {
+    setTimeout(() => {
+      const lastCheck = retrieve(KEYS.LAST_UPDATE_CHECK);
+      const shouldCheck = !lastCheck ||
+        (new Date() - new Date(lastCheck)) > (UPDATE_CONFIG.CHECK_INTERVAL_HOURS * 60 * 60 * 1000);
+
+      if (shouldCheck) {
+        checkForUpdates(true);
+      }
+    }, 3000);
+  }
+
   // Initial setup
   setTimeout(() => {
     try {
@@ -1814,7 +2042,7 @@ homeFloatingIcon.innerHTML = `
       validateAndFixData();
       updateDisplay();
       updateHomeFloatingIcon();
-      log('✅ Sagemaker Utilization Counter initialized (Ultra-Stable Version)');
+      log('✅ Sagemaker Utilization Counter initialized (Ultra-Stable Version with Auto-Update)');
     } catch (e) {
       console.error('[SM] Initialization error:', e);
     }
