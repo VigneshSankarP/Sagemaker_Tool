@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SageMaker Smart-Play
 // @namespace    http://tampermonkey.net/
-// @version      11
+// @version      10.6
 // @description  Smart-Play with autoplay + spacebar + footer alignment + auto-update + all fixes
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
