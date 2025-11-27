@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SageMaker Keyboard Shortcuts
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Add Q W E R keyboard shortcuts for options 11-14 in SageMaker labeling tasks
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
