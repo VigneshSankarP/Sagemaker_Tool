@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sagemaker Utilization Counter
 // @namespace    http://tampermonkey.net/
-// @version      4.5
+// @version      5
 // @description  Dashboard - Optimized for 8+ Hour Sessions
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
@@ -17,31 +17,16 @@
 // ==/UserScript==
 
 (function () {
-  'use strict';
-(function() {
-    if (!window.__SAGEMAKER__) {
-      window.__SAGEMAKER__ = {
-        version: '1.0',
-        scripts: {},
-        getFooter() {
-          const p = document.querySelector("p.awsui-util-p-n.awsui-util-t-c.awsui-util-status-info");
-          if (p?.parentElement) return p.parentElement;
-          return document.querySelector('.cswui-footer, .awsui-footer, footer, [role="contentinfo"]');
-        },
-        checkHealth() {
-          console.log('🔍 SageMaker Scripts Status:', this.scripts);
-          return this.scripts;
-        }
-      };
-    }
-  })();
+  "use strict";
 
   if (window.__SM_TIMER_RUNNING__) return;
   window.__SM_TIMER_RUNNING__ = true;
 
-  // ---------------------------------------------------------------------------
-  // Minimal utilities (sanitization, compression, dom cache)
-  // ---------------------------------------------------------------------------
+  console.log("🚀 SageMaker ULTIMATE AI v5.0.0 initializing...");
+
+  // ============================================================================
+  // 🛡️ SECURITY
+  // ============================================================================
   const sanitizeHTML = (str) => {
     if (!str) return '';
     const div = document.createElement('div');
@@ -49,316 +34,173 @@
     return div.innerHTML;
   };
 
+  // ============================================================================
+  // 💾 DATA COMPRESSION
+  // ============================================================================
   const Compression = {
     compress(data) {
       try {
         const json = JSON.stringify(data);
         return btoa(encodeURIComponent(json));
-      } catch (e) { return null; }
+      } catch (e) {
+        return null;
+      }
     },
     decompress(compressed) {
-      try { return JSON.parse(decodeURIComponent(atob(compressed))); }
-      catch (e) { return null; }
+      try {
+        return JSON.parse(decodeURIComponent(atob(compressed)));
+      } catch (e) {
+        return null;
+      }
     }
   };
 
+  // ============================================================================
+  // 🎯 DOM CACHE
+  // ============================================================================
   const DOMCache = {
     elements: new Map(),
     get(selector, refresh = false) {
-      if (refresh || !this.elements.has(selector)) this.elements.set(selector, document.querySelector(selector));
+      if (refresh || !this.elements.has(selector)) {
+        this.elements.set(selector, document.querySelector(selector));
+      }
       return this.elements.get(selector);
     },
     getAll(selector, refresh = false) {
       const key = `all:${selector}`;
-      if (refresh || !this.elements.has(key)) this.elements.set(key, document.querySelectorAll(selector));
+      if (refresh || !this.elements.has(key)) {
+        this.elements.set(key, document.querySelectorAll(selector));
+      }
       return this.elements.get(key);
     },
-    clear() { this.elements.clear(); }
+    clear() {
+      this.elements.clear();
+    }
   };
 
-  function fmt(seconds) {
-    seconds = Math.max(0, Math.floor(+seconds || 0));
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return [h, m, s].map(n => String(n).padStart(2, '0')).join(':');
-  }
-
-  // ---------------------------------------------------------------------------
-  // Config & keys
-  // ---------------------------------------------------------------------------
+  // ============================================================================
+  // ⚙️ CONFIGURATION - ULTIMATE SETTINGS
+  // ============================================================================
   const CONFIG = {
     CHECK_INTERVAL_MS: 500,
-    CHECK_INTERVAL_ACTIVE: 1000,
-    CHECK_INTERVAL_IDLE: 3000,
     DAILY_ALERT_HOURS: 8,
     MAX_HISTORY_DAYS: 30,
-    DEBUG: false,
+    DEBUG: true,
     SESSIONS_LIMIT: 2000,
     ENABLE_ANALYTICS: true,
     AUTO_BACKUP_INTERVAL: 24 * 60 * 60 * 1000,
-    TASK_NAME_CACHE_MS: 2000,
-    TASK_NAME_RETRY_ATTEMPTS: 3,
-    TASK_NAME_RETRY_DELAY: 500,
-    MUTATION_OBSERVER_THROTTLE: 1000,
-    BACKWARD_TIMER_THRESHOLD: 5,
-    BODY_TEXT_CACHE_MS: 500
+
+    // 🎯 CORE: Only submitted tasks count
+    COUNTING_MODE: "submitted_only",
+
+    // 🤖 AI - FULL SUITE ENABLED
+    AI_ENABLED: true,
+    AI_CHECK_INTERVAL: 5000,
+    AI_LEARNING_ENABLED: true,
+    AI_PROTECTION_ENABLED: true,
+    AI_SUGGESTIONS_ENABLED: true,
+    AI_AUTO_FIX_ENABLED: true,
+    AI_ANOMALY_THRESHOLD: 0.7,
+    AI_PREDICTION_ENABLED: true,
+    AI_OPTIMIZATION_ENABLED: true,
+    AI_REAL_TIME_VALIDATION: true,
+    AI_PREDICTIVE_FAILURE: true,
+    AI_SELF_HEALING: true,
+    AI_PERFORMANCE_MONITOR: true,
+    AI_STABILITY_CHECKS: true,
+    AI_RELIABILITY_SCORING: true,
+
+    // 🔧 ALL BUG FIXES ENABLED
+    FIX_REFRESH_LOSS: true,
+    FIX_DETECTION: true,
+    FIX_IGNORE_LOOP: true,
+    FIX_PARSING: true,
+    FIX_RACE_CONDITIONS: true,
+    FIX_MIDNIGHT: true,
   };
+
+  function log(...args) {
+    if (CONFIG.DEBUG) console.log("[SM-ULTIMATE]", ...args);
+  }
 
   const KEYS = {
-    DAILY_COMMITTED: 'sm_daily_committed',
-    LAST_DATE: 'sm_last_date',
-    HISTORY: 'sm_history',
-    COUNT: 'sm_count',
-    LAST_RESET: 'sm_last_reset',
-    IGNORE_TASK: 'sm_ignore_task',
-    SESSIONS: 'sm_sessions',
-    LAST_MIDNIGHT_CHECK: 'sm_last_midnight_check',
-    ANALYTICS: 'sm_analytics',
-    LAST_BACKUP: 'sm_last_backup',
-    PREFERENCES: 'sm_preferences',
-    AUTO_BACKUP: 'sm_auto_backup',
-    UPDATE_AVAILABLE: 'sm_update_available',
-    LAST_UPDATE_CHECK: 'sm_last_update_check'
+    DAILY_COMMITTED: "sm_daily_committed",
+    LAST_DATE: "sm_last_date",
+    HISTORY: "sm_history",
+    COUNT: "sm_count",
+    LAST_RESET: "sm_last_reset",
+    IGNORE_TASK: "sm_ignore_task",
+    SESSIONS: "sm_sessions",
+    ANALYTICS: "sm_analytics",
+    LAST_BACKUP: "sm_last_backup",
+    ACTIVE_TASK: "sm_active_task",
+    COMMIT_QUEUE: "sm_commit_queue",
+    AI_PATTERNS: "sm_ai_patterns",
+    AI_PREDICTIONS: "sm_ai_predictions",
+    AI_ANOMALIES: "sm_ai_anomalies",
+    AI_INSIGHTS: "sm_ai_insights",
+    AI_CONFIG: "sm_ai_config",
+    AI_PROFILE: "sm_ai_profile",
+    AI_STATS: "sm_ai_stats",
+    AI_HEALTH: "sm_ai_health",
+    AI_PERFORMANCE: "sm_ai_performance",
+    AI_ERROR_LOG: "sm_ai_error_log",
+    AI_RECOVERY_LOG: "sm_ai_recovery_log",
   };
 
-  function log(...args) { if (CONFIG.DEBUG) console.log('[SM]', ...args); }
+  let trackingIntervalId = null;
 
-  // ---------------------------------------------------------------------------
-  // Auto-Update System
-  // ---------------------------------------------------------------------------
-  const UPDATE_CONFIG = {
-    CHECK_ON_STARTUP: true,
-    CHECK_INTERVAL_HOURS: 24,
-    NOTIFY_UPDATES: true,
-    AUTO_REDIRECT: false
-  };
-
-  function checkForUpdates(silent = false) {
-    try {
-      if (typeof GM === 'undefined' || !GM.info) {
-        if (!silent) log('GM API not available for update check');
-        return;
-      }
-
-      const CURRENT_VERSION = GM.info.script.version;
-      const UPDATE_URL = GM.info.script.updateURL || GM.info.script.downloadURL;
-      const DOWNLOAD_URL = GM.info.script.downloadURL;
-
-      if (!UPDATE_URL || !DOWNLOAD_URL) {
-        if (!silent) log('No update URLs configured');
-        return;
-      }
-
-      log('🔍 Checking for updates... Current version:', CURRENT_VERSION);
-
-      fetch(UPDATE_URL + '?t=' + Date.now())
-        .then(response => response.text())
-        .then(text => {
-          const match = text.match(/@version\s+([0-9.]+)/);
-          if (!match) {
-            if (!silent) log('Could not parse version from remote script');
-            return;
-          }
-
-          const REMOTE_VERSION = match[1];
-          log('Remote version:', REMOTE_VERSION);
-
-          if (REMOTE_VERSION !== CURRENT_VERSION) {
-            log(`🎉 New version available: ${REMOTE_VERSION} (current: ${CURRENT_VERSION})`);
-
-            store(KEYS.UPDATE_AVAILABLE, {
-              version: REMOTE_VERSION,
-              currentVersion: CURRENT_VERSION,
-              downloadUrl: DOWNLOAD_URL,
-              checkedAt: new Date().toISOString()
-            });
-
-            if (UPDATE_CONFIG.NOTIFY_UPDATES) {
-              showUpdateNotification(REMOTE_VERSION, CURRENT_VERSION, DOWNLOAD_URL);
-            }
-
-            if (UPDATE_CONFIG.AUTO_REDIRECT) {
-              setTimeout(() => {
-                if (confirm(`New version ${REMOTE_VERSION} is available! Update now?`)) {
-                  window.location.href = DOWNLOAD_URL;
-                }
-              }, 2000);
-            }
-          } else {
-            log('✅ Script is up to date');
-            store(KEYS.UPDATE_AVAILABLE, null);
-            store(KEYS.LAST_UPDATE_CHECK, new Date().toISOString());
-          }
-        })
-        .catch(err => {
-          if (!silent) console.error('[SM] Update check failed:', err);
+  // ============================================================================
+  // 🛡️ ERROR BOUNDARY
+  // ============================================================================
+  function withErrorBoundary(fn, context = 'operation') {
+    return function(...args) {
+      try {
+        return fn.apply(this, args);
+      } catch (error) {
+        console.error(`[SM-ULTIMATE Error in ${context}]`, error);
+        const analytics = retrieve(KEYS.ANALYTICS, {});
+        analytics.errors = analytics.errors || [];
+        analytics.errors.push({
+          context,
+          message: error.message,
+          stack: error.stack?.substring(0, 500),
+          timestamp: new Date().toISOString()
         });
-    } catch (e) {
-      if (!silent) console.error('[SM] Update check error:', e);
-    }
+        if (analytics.errors.length > 50) {
+          analytics.errors = analytics.errors.slice(-50);
+        }
+        store(KEYS.ANALYTICS, analytics);
+
+        if (window.AI) {
+          AI.handleError(error, context);
+        }
+
+        return null;
+      }
+    };
   }
 
-  function showUpdateNotification(newVersion, currentVersion, downloadUrl) {
-    const existing = document.getElementById('sm-update-notification');
-    if (existing) existing.remove();
-
-    const notification = document.createElement('div');
-    notification.id = 'sm-update-notification';
-    notification.innerHTML = `
-      <style>
-        #sm-update-notification {
-          position: fixed;
-          top: 20px;
-          right: 20px;
-          width: 320px;
-          background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-          color: white;
-          padding: 16px;
-          border-radius: 12px;
-          box-shadow: 0 10px 40px rgba(16, 185, 129, 0.4);
-          z-index: 9999999;
-          font-family: system-ui, -apple-system, sans-serif;
-          animation: slideInRight 0.4s ease-out;
-        }
-        @keyframes slideInRight {
-          from { transform: translateX(400px); opacity: 0; }
-          to { transform: translateX(0); opacity: 1; }
-        }
-        #sm-update-notification .update-header {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin-bottom: 12px;
-          font-weight: 700;
-          font-size: 16px;
-        }
-        #sm-update-notification .update-body {
-          font-size: 13px;
-          margin-bottom: 12px;
-          opacity: 0.95;
-        }
-        #sm-update-notification .update-version {
-          background: rgba(255, 255, 255, 0.2);
-          padding: 4px 8px;
-          border-radius: 6px;
-          font-family: monospace;
-          font-weight: 700;
-        }
-        #sm-update-notification .update-actions {
-          display: flex;
-          gap: 8px;
-          margin-top: 12px;
-        }
-        #sm-update-notification button {
-          flex: 1;
-          padding: 8px 12px;
-          border: none;
-          border-radius: 6px;
-          cursor: pointer;
-          font-weight: 600;
-          font-size: 13px;
-          transition: all 0.2s;
-        }
-        #sm-update-notification .btn-update {
-          background: white;
-          color: #059669;
-        }
-        #sm-update-notification .btn-update:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(255, 255, 255, 0.3);
-        }
-        #sm-update-notification .btn-dismiss {
-          background: rgba(255, 255, 255, 0.2);
-          color: white;
-        }
-        #sm-update-notification .btn-dismiss:hover {
-          background: rgba(255, 255, 255, 0.3);
-        }
-      </style>
-      <div class="update-header">
-        <span style="font-size: 24px;">🚀</span>
-        <span>Update Available!</span>
-      </div>
-      <div class="update-body">
-        A new version of Sagemaker Utilization Counter is available!
-        <div style="margin-top: 8px;">
-          <span class="update-version">${sanitizeHTML(currentVersion)}</span>
-          <span style="margin: 0 8px;">→</span>
-          <span class="update-version">${sanitizeHTML(newVersion)}</span>
-        </div>
-      </div>
-      <div class="update-actions">
-        <button class="btn-update" id="sm-update-now">Update Now</button>
-        <button class="btn-dismiss" id="sm-update-dismiss">Later</button>
-      </div>
-    `;
-
-    document.body.appendChild(notification);
-
-    const autoDismiss = setTimeout(() => {
-      notification.style.animation = 'slideInRight 0.3s ease-in reverse';
-      setTimeout(() => notification.remove(), 300);
-    }, 15000);
-
-    notification.querySelector('#sm-update-now').addEventListener('click', () => {
-      clearTimeout(autoDismiss);
-      window.location.href = downloadUrl;
-    });
-
-    notification.querySelector('#sm-update-dismiss').addEventListener('click', () => {
-      clearTimeout(autoDismiss);
-      notification.style.animation = 'slideInRight 0.3s ease-in reverse';
-      setTimeout(() => notification.remove(), 300);
-    });
-  }
-
-  // NEW: Body text caching for performance
-  let bodyTextCache = { text: '', timestamp: 0 };
-  function getBodyText() {
-    const now = Date.now();
-    if (bodyTextCache.text && (now - bodyTextCache.timestamp) < CONFIG.BODY_TEXT_CACHE_MS) {
-      return bodyTextCache.text;
-    }
-    try {
-      const text = document.body.innerText || document.body.textContent || '';
-      bodyTextCache = { text, timestamp: now };
-      return text;
-    } catch (e) {
-      return '';
-    }
-  }
-
+  // ============================================================================
+  // 💾 STORAGE FUNCTIONS
+  // ============================================================================
   function store(key, value) {
     try {
       localStorage.setItem(key, JSON.stringify(value));
       return true;
-    }
-    catch (e) {
-      log('store error', e);
+    } catch (e) {
+      log("store error", e);
       if (e.name === 'QuotaExceededError') {
-        console.warn('[SM] Storage quota exceeded! Attempting cleanup...');
         try {
           const sessions = retrieve(KEYS.SESSIONS, []);
           if (sessions.length > 100) {
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - 30);
-            const cutoffISO = cutoffDate.toISOString();
-
-            const trimmed = sessions.filter(s => {
-              if (s.date >= cutoffISO) return true;
-              if (s.action === 'submitted') return true;
-              return false;
-            }).slice(0, 1000);
-
-            localStorage.setItem(KEYS.SESSIONS, JSON.stringify(trimmed));
-            console.log('[SM] Trimmed sessions from', sessions.length, 'to', trimmed.length);
+            store(KEYS.SESSIONS, sessions.slice(0, Math.floor(sessions.length / 2)));
+            log("Emergency cleanup: sessions reduced");
             localStorage.setItem(key, JSON.stringify(value));
             return true;
           }
-        } catch (err) {
-          console.error('[SM] Storage full! Please export data and reset.');
-          alert('⚠️ Storage full! Please open dashboard and export your data.');
+        } catch (retryError) {
+          console.error('Storage full! Please export data.');
           return false;
         }
       }
@@ -367,8 +209,13 @@
   }
 
   function retrieve(key, fallback = null) {
-    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
-    catch (e) { log('retrieve error', e); return fallback; }
+    try {
+      const v = localStorage.getItem(key);
+      return v ? JSON.parse(v) : fallback;
+    } catch (e) {
+      log("retrieve error", e);
+      return fallback;
+    }
   }
 
   function storeCompressed(key, value) {
@@ -380,7 +227,9 @@
         return true;
       }
       return store(key, value);
-    } catch (e) { return store(key, value); }
+    } catch (e) {
+      return store(key, value);
+    }
   }
 
   function retrieveCompressed(key, fallback = null) {
@@ -394,99 +243,1018 @@
         }
       }
       return retrieve(key, fallback);
-    } catch (e) { return retrieve(key, fallback); }
-  }
-
-  function setIgnoreTask(taskId) {
-    try { if (taskId == null) sessionStorage.removeItem(KEYS.IGNORE_TASK); else sessionStorage.setItem(KEYS.IGNORE_TASK, taskId); }
-    catch (e) { log(e); }
-  }
-  function getIgnoreTask() { try { return sessionStorage.getItem(KEYS.IGNORE_TASK); } catch (e) { return null; } }
-
-  // ---------------------------------------------------------------------------
-  // Storage size warning
-  // ---------------------------------------------------------------------------
-  function checkStorageSize() {
-    try {
-      const size = JSON.stringify(localStorage).length;
-      const maxSize = 5 * 1024 * 1024;
-      const percent = (size / maxSize) * 100;
-      if (percent > 90) {
-        console.warn('[SM] Storage nearly full:', (size/1024).toFixed(2) + 'KB of ~5120KB (' + percent.toFixed(1) + '%)');
-        return true;
-      }
-      return false;
     } catch (e) {
-      return false;
+      return retrieve(key, fallback);
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Error boundary
-  // ---------------------------------------------------------------------------
-  function withErrorBoundary(fn, context = 'operation') {
-    return function(...args) {
-      try { return fn.apply(this, args); }
-      catch (error) {
-        console.error(`[SM Error in ${context}]`, error);
-        const analytics = retrieve(KEYS.ANALYTICS, {});
-        analytics.errors = analytics.errors || [];
-        analytics.errors.push({ context, message: error.message, stack: error.stack?.substring(0, 500), timestamp: new Date().toISOString() });
-        if (analytics.errors.length > 50) analytics.errors = analytics.errors.slice(-50);
-        store(KEYS.ANALYTICS, analytics);
+  function setIgnoreTask(taskId, timestamp = null) {
+    try {
+      if (taskId == null) {
+        sessionStorage.removeItem(KEYS.IGNORE_TASK);
+      } else {
+        const ignoreData = {
+          taskId: taskId,
+          timestamp: timestamp || Date.now()
+        };
+        sessionStorage.setItem(KEYS.IGNORE_TASK, JSON.stringify(ignoreData));
+      }
+    } catch (e) { log(e); }
+  }
+
+  function getIgnoreTask() {
+    try {
+      const data = sessionStorage.getItem(KEYS.IGNORE_TASK);
+      if (!data) return null;
+
+      const ignoreData = JSON.parse(data);
+      const fiveMinutes = 5 * 60 * 1000;
+
+      if (Date.now() - ignoreData.timestamp > fiveMinutes) {
+        setIgnoreTask(null);
         return null;
       }
-    };
+
+      return ignoreData.taskId;
+    } catch (e) { return null; }
   }
 
-  window.addEventListener('error', (e) => {
-    console.error('[SM Global Error]', e.error);
-    updateAnalytics('error', { message: e.message, filename: e.filename, lineno: e.lineno });
-  });
+  // ============================================================================
+  // 🔧 UTILITY FUNCTIONS
+  // ============================================================================
+  const todayStr = () => new Date().toISOString().split("T")[0];
 
-  // ---------------------------------------------------------------------------
-  // Task name detection with caching and retry
-  // ---------------------------------------------------------------------------
-  let taskNameCache = {
-    taskId: null,
-    name: null,
-    timestamp: 0
-  };
-
-  function clearTaskNameCache() {
-    taskNameCache = {
-      taskId: null,
-      name: null,
-      timestamp: 0
-    };
-    DOMCache.clear();
-    log('Task name cache cleared');
+  function fmt(seconds) {
+    seconds = Math.max(0, Math.floor(+seconds || 0));
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return [h, m, s].map(n => String(n).padStart(2, "0")).join(":");
   }
 
-  function getTaskName(forceRefresh = false) {
+  // ============================================================================
+  // 🔧 COMMIT QUEUE SYSTEM - Prevents Race Conditions
+  // ============================================================================
+  const commitQueue = [];
+  let isProcessingQueue = false;
+
+  async function addToCommitQueue(taskData) {
+    commitQueue.push(taskData);
+    log(`📥 Added to queue: ${taskData.action} - ${fmt(taskData.duration)}`);
+    await processCommitQueue();
+  }
+
+  async function processCommitQueue() {
+    if (isProcessingQueue || commitQueue.length === 0) return;
+
+    isProcessingQueue = true;
+    log(`⚙️ Processing queue (${commitQueue.length} items)...`);
+
+    while (commitQueue.length > 0) {
+      const taskData = commitQueue.shift();
+
+      try {
+        if (taskData.shouldCommitTime) {
+          const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+          const newTotal = committed + taskData.duration;
+          store(KEYS.DAILY_COMMITTED, newTotal);
+          log(`✅ Timer updated: ${fmt(committed)} → ${fmt(newTotal)}`);
+        } else {
+          log(`⏭️ Timer not updated (${taskData.action})`);
+        }
+
+        if (taskData.shouldCount) {
+          const count = retrieve(KEYS.COUNT, 0) || 0;
+          store(KEYS.COUNT, count + 1);
+          log(`✅ Counter updated: ${count} → ${count + 1}`);
+        } else {
+          log(`⏭️ Counter not updated (${taskData.action})`);
+        }
+
+        pushSessionRecord({
+          id: taskData.id,
+          taskName: taskData.taskName,
+          date: new Date().toISOString(),
+          duration: taskData.duration,
+          action: taskData.action
+        });
+
+        if (CONFIG.ENABLE_ANALYTICS) {
+          updateAnalytics(taskData.action === 'submitted' ? 'task_completed' :
+                         taskData.action === 'skipped' ? 'task_skipped' : 'task_expired',
+                         { duration: taskData.duration });
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+      } catch (e) {
+        log("❌ Commit queue error:", e);
+        if (window.AI) AI.handleError(e, 'commit_queue');
+      }
+    }
+
+    isProcessingQueue = false;
+    log("✅ Queue processing complete");
+  }
+
+  // ============================================================================
+  // 🤖 ULTIMATE AI ENGINE - FULL SUITE
+  // ============================================================================
+  class AIEngine {
+    constructor() {
+      this.patterns = retrieve(KEYS.AI_PATTERNS, {});
+      this.predictions = retrieve(KEYS.AI_PREDICTIONS, {});
+      this.anomalies = retrieve(KEYS.AI_ANOMALIES, []);
+      this.insights = retrieve(KEYS.AI_INSIGHTS, []);
+      this.profile = retrieve(KEYS.AI_PROFILE, {});
+      this.stats = retrieve(KEYS.AI_STATS, {
+        protections_applied: 0,
+        anomalies_detected: 0,
+        patterns_learned: 0,
+        predictions_made: 0,
+        auto_fixes: 0,
+        optimizations: 0,
+        accuracy_validations: 0,
+        data_recoveries: 0,
+        errors_prevented: 0,
+        self_heals: 0,
+        performance_optimizations: 0,
+        stability_checks: 0,
+        reliability_improvements: 0,
+      });
+
+      this.config = retrieve(KEYS.AI_CONFIG, {
+        learning_enabled: CONFIG.AI_LEARNING_ENABLED,
+        protection_enabled: CONFIG.AI_PROTECTION_ENABLED,
+        suggestions_enabled: CONFIG.AI_SUGGESTIONS_ENABLED,
+        auto_fix_enabled: CONFIG.AI_AUTO_FIX_ENABLED,
+        prediction_enabled: CONFIG.AI_PREDICTION_ENABLED,
+        optimization_enabled: CONFIG.AI_OPTIMIZATION_ENABLED,
+        anomaly_threshold: CONFIG.AI_ANOMALY_THRESHOLD,
+        real_time_validation: CONFIG.AI_REAL_TIME_VALIDATION,
+        predictive_failure: CONFIG.AI_PREDICTIVE_FAILURE,
+        self_healing: CONFIG.AI_SELF_HEALING,
+        performance_monitor: CONFIG.AI_PERFORMANCE_MONITOR,
+        stability_checks: CONFIG.AI_STABILITY_CHECKS,
+        reliability_scoring: CONFIG.AI_RELIABILITY_SCORING,
+      });
+
+      this.lastCheck = Date.now();
+      this.performanceMetrics = {
+        memory_usage: 0,
+        cpu_impact: 'Low',
+        efficiency: 100,
+        accuracy: 100,
+        response_time: 0,
+        error_rate: 0,
+        success_rate: 100,
+        uptime: 100,
+        stability_score: 100,
+        reliability_score: 100,
+      };
+
+      this.health = retrieve(KEYS.AI_HEALTH, {
+        status: 'excellent',
+        last_check: Date.now(),
+        issues: [],
+        warnings: [],
+      });
+
+      this.performanceHistory = [];
+      this.errorLog = retrieve(KEYS.AI_ERROR_LOG, []);
+      this.recoveryLog = retrieve(KEYS.AI_RECOVERY_LOG, []);
+
+      if (this.config.real_time_validation) {
+        this.startRealTimeValidation();
+      }
+
+      log("🤖 AI Engine ULTIMATE v5.0.0 initialized - Full Suite Active");
+    }
+
+    startRealTimeValidation() {
+      setInterval(() => {
+        this.validateAccuracyRealTime();
+      }, 5000);
+      log("✅ Real-time validation started (5s intervals)");
+    }
+
+    validateAccuracyRealTime() {
+      try {
+        const startTime = performance.now();
+
+        const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+        const sessions = retrieve(KEYS.SESSIONS, []) || [];
+        const today = todayStr();
+
+        const todaySessions = sessions.filter(s => {
+          const sessionDate = new Date(s.date).toISOString().split('T')[0];
+          return sessionDate === today;
+        });
+
+        const expectedTotal = todaySessions.reduce((sum, s) => {
+          if (s.action === 'submitted' || s.action.includes('manual_reset')) {
+            return sum + (s.duration || 0);
+          }
+          return sum;
+        }, 0);
+
+        const actual = committed;
+        const diff = Math.abs(expectedTotal - actual);
+
+        const responseTime = performance.now() - startTime;
+        this.performanceMetrics.response_time = responseTime.toFixed(2);
+
+        if (diff > 5) {
+          log(`⚠️ AI ALERT: Accuracy drift detected!`);
+          log(`   Expected: ${fmt(expectedTotal)} (${expectedTotal}s)`);
+          log(`   Actual:   ${fmt(actual)} (${actual}s)`);
+          log(`   Diff:     ${fmt(diff)} (${diff}s)`);
+
+          if (this.config.self_healing) {
+            log("🔧 Auto-repairing...");
+            this.performSelfHeal('accuracy_drift', {
+              expected: expectedTotal,
+              actual,
+              diff,
+              corrected_value: expectedTotal
+            });
+          }
+        } else {
+          this.performanceMetrics.accuracy = 100;
+          this.performanceMetrics.success_rate = Math.min(100, this.performanceMetrics.success_rate + 0.1);
+        }
+
+        this.stats.accuracy_validations++;
+        this.updateHealthStatus();
+
+      } catch (e) {
+        log("❌ AI validation error:", e);
+        this.handleError(e, 'real_time_validation');
+      }
+    }
+
+    performSelfHeal(issueType, data) {
+      try {
+        log(`🔧 AI Self-Heal: Repairing ${issueType}...`);
+
+        switch(issueType) {
+          case 'accuracy_drift':
+            store(KEYS.DAILY_COMMITTED, data.corrected_value);
+            this.stats.self_heals++;
+            this.stats.auto_fixes++;
+            this.stats.data_recoveries++;
+            this.logRecovery(issueType, `Auto-corrected ${fmt(data.diff)} drift`, data);
+            log(`✅ Corrected: ${fmt(data.actual)} → ${fmt(data.expected)}`);
+            break;
+
+          case 'corrupted_data':
+            this.detectDataCorruption();
+            this.stats.self_heals++;
+            this.logRecovery(issueType, 'Cleaned corrupted data', data);
+            break;
+
+          case 'memory_leak':
+            this.preventMemoryLeaks();
+            this.stats.self_heals++;
+            this.logRecovery(issueType, 'Cleared memory leaks', data);
+            break;
+
+          case 'session_corruption':
+            this.validateSessions();
+            this.stats.self_heals++;
+            this.logRecovery(issueType, 'Validated and cleaned sessions', data);
+            break;
+        }
+
+        this.saveState();
+        log(`✅ AI Self-Heal: ${issueType} repaired successfully`);
+
+        if (typeof updateDisplay === 'function') {
+          updateDisplay();
+        }
+
+      } catch (e) {
+        log("❌ Self-heal error:", e);
+        this.handleError(e, 'self_heal');
+      }
+    }
+
+    predictFailures() {
+      try {
+        const predictions = [];
+
+        const storageUsed = JSON.stringify(localStorage).length;
+        const storageLimit = 10000000;
+        const storagePercent = (storageUsed / storageLimit) * 100;
+
+        if (storagePercent > 80) {
+          predictions.push({
+            type: 'storage_overflow',
+            severity: 'high',
+            probability: storagePercent - 80,
+            eta: this.estimateStorageFull(),
+            action: 'Cleanup old data or export'
+          });
+        }
+
+        const sessions = retrieve(KEYS.SESSIONS, []);
+        if (sessions.length > CONFIG.SESSIONS_LIMIT * 0.9) {
+          predictions.push({
+            type: 'session_limit',
+            severity: 'medium',
+            probability: 70,
+            eta: this.estimateSessionLimit(sessions.length),
+            action: 'Export and cleanup sessions'
+          });
+        }
+
+        if (this.errorLog.length > 10) {
+          const recentErrors = this.errorLog.slice(-10);
+          const errorRate = recentErrors.length / 10;
+          if (errorRate > 0.3) {
+            predictions.push({
+              type: 'stability_degradation',
+              severity: 'high',
+              probability: errorRate * 100,
+              eta: 'Immediate',
+              action: 'Review error log and reset if needed'
+            });
+          }
+        }
+
+        if (predictions.length > 0) {
+          log('🔮 AI Predictions:', predictions);
+          this.predictions.failures = predictions;
+          store(KEYS.AI_PREDICTIONS, this.predictions);
+        }
+
+        return predictions;
+
+      } catch (e) {
+        log("❌ Predictive failure error:", e);
+        return [];
+      }
+    }
+
+    estimateStorageFull() {
+      const storageUsed = JSON.stringify(localStorage).length;
+      const sessions = retrieve(KEYS.SESSIONS, []);
+      const avgSessionSize = storageUsed / Math.max(1, sessions.length);
+      const remainingSpace = 10000000 - storageUsed;
+      const sessionsUntilFull = remainingSpace / avgSessionSize;
+      const avgSessionsPerDay = sessions.filter(s => {
+        const date = new Date(s.date);
+        const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        return date > dayAgo;
+      }).length;
+      const daysUntilFull = sessionsUntilFull / Math.max(1, avgSessionsPerDay);
+      return `${Math.floor(daysUntilFull)} days`;
+    }
+
+    estimateSessionLimit(currentCount) {
+      const sessions = retrieve(KEYS.SESSIONS, []);
+      const avgSessionsPerDay = sessions.filter(s => {
+        const date = new Date(s.date);
+        const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        return date > dayAgo;
+      }).length;
+      const remainingSessions = CONFIG.SESSIONS_LIMIT - currentCount;
+      const daysUntilLimit = remainingSessions / Math.max(1, avgSessionsPerDay);
+      return `${Math.floor(daysUntilLimit)} days`;
+    }
+
+    monitorPerformance() {
+      try {
+        const startTime = performance.now();
+
+        const storageSize = JSON.stringify(localStorage).length;
+        this.performanceMetrics.memory_usage = (storageSize / 1024).toFixed(2);
+
+        const operations = this.stats.protections_applied + this.stats.accuracy_validations;
+        if (operations > 1000) {
+          this.performanceMetrics.cpu_impact = 'High';
+        } else if (operations > 500) {
+          this.performanceMetrics.cpu_impact = 'Medium';
+        } else {
+          this.performanceMetrics.cpu_impact = 'Low';
+        }
+
+        const errorRate = this.errorLog.length / Math.max(1, operations);
+        this.performanceMetrics.error_rate = (errorRate * 100).toFixed(2);
+        this.performanceMetrics.efficiency = Math.max(0, 100 - (errorRate * 100));
+
+        const responseTime = performance.now() - startTime;
+        this.performanceHistory.push(responseTime);
+        if (this.performanceHistory.length > 100) {
+          this.performanceHistory.shift();
+        }
+
+        const avgResponseTime = this.performanceHistory.reduce((a, b) => a + b, 0) / this.performanceHistory.length;
+        this.performanceMetrics.response_time = avgResponseTime.toFixed(2);
+
+        const recentErrors = this.errorLog.slice(-20).length;
+        this.performanceMetrics.stability_score = Math.max(0, 100 - (recentErrors * 5));
+
+        store(KEYS.AI_PERFORMANCE, this.performanceMetrics);
+        this.stats.performance_optimizations++;
+
+      } catch (e) {
+        log("❌ Performance monitoring error:", e);
+      }
+    }
+
+    checkStability() {
+      try {
+        const issues = [];
+        const warnings = [];
+
+        const committed = retrieve(KEYS.DAILY_COMMITTED, 0);
+        if (committed < 0 || committed > 86400) {
+          issues.push('Invalid daily_committed value');
+        }
+
+        const count = retrieve(KEYS.COUNT, 0);
+        if (count < 0) {
+          issues.push('Negative count value');
+        }
+
+        const sessions = retrieve(KEYS.SESSIONS, []);
+        if (!Array.isArray(sessions)) {
+          issues.push('Sessions not an array');
+        }
+
+        const storageUsed = JSON.stringify(localStorage).length;
+        const storagePercent = (storageUsed / 10000000) * 100;
+        if (storagePercent > 90) {
+          issues.push('Storage almost full');
+        } else if (storagePercent > 70) {
+          warnings.push('Storage usage high');
+        }
+
+        const recentErrors = this.errorLog.slice(-20);
+        if (recentErrors.length > 10) {
+          issues.push('High error rate detected');
+        } else if (recentErrors.length > 5) {
+          warnings.push('Elevated error rate');
+        }
+
+        this.health.issues = issues;
+        this.health.warnings = warnings;
+        this.health.last_check = Date.now();
+
+        if (issues.length === 0 && warnings.length === 0) {
+          this.health.status = 'excellent';
+        } else if (issues.length === 0) {
+          this.health.status = 'good';
+        } else if (issues.length < 3) {
+          this.health.status = 'degraded';
+        } else {
+          this.health.status = 'critical';
+        }
+
+        store(KEYS.AI_HEALTH, this.health);
+        this.stats.stability_checks++;
+
+        if (issues.length > 0 && this.config.self_healing) {
+          issues.forEach(issue => {
+            if (issue.includes('Invalid daily_committed')) {
+              this.performSelfHeal('corrupted_data', { field: 'daily_committed' });
+            }
+            if (issue.includes('Negative count')) {
+              this.performSelfHeal('corrupted_data', { field: 'count' });
+            }
+            if (issue.includes('Sessions not an array')) {
+              this.performSelfHeal('session_corruption', {});
+            }
+          });
+        }
+
+      } catch (e) {
+        log("❌ Stability check error:", e);
+        this.handleError(e, 'stability_check');
+      }
+    }
+
+    calculateReliabilityScore() {
+      try {
+        let score = 100;
+
+        const errorRate = this.errorLog.length / Math.max(1, this.stats.accuracy_validations);
+        score -= (errorRate * 50);
+
+        const sessions = retrieve(KEYS.SESSIONS, []);
+        const validationFailures = sessions.filter(s => s.action === 'validation_failed').length;
+        score -= (validationFailures * 2);
+
+        score -= (this.health.issues.length * 10);
+        score -= (this.health.warnings.length * 5);
+
+        const successRate = this.performanceMetrics.success_rate || 100;
+        score = (score + successRate) / 2;
+
+        const healBonus = Math.min(10, this.stats.self_heals * 0.5);
+        score += healBonus;
+
+        score = Math.max(0, Math.min(100, score));
+
+        this.performanceMetrics.reliability_score = Math.round(score);
+        this.stats.reliability_improvements++;
+
+        return score;
+
+      } catch (e) {
+        log("❌ Reliability scoring error:", e);
+        return 0;
+      }
+    }
+
+    handleError(error, context) {
+      try {
+        const errorEntry = {
+          error: error.message,
+          context: context,
+          timestamp: new Date().toISOString(),
+          stack: error.stack?.substring(0, 200)
+        };
+
+        this.errorLog.push(errorEntry);
+        if (this.errorLog.length > 100) {
+          this.errorLog.shift();
+        }
+        store(KEYS.AI_ERROR_LOG, this.errorLog);
+
+        if (this.config.self_healing) {
+          this.attemptRecovery(error, context);
+        }
+
+        this.stats.errors_prevented++;
+
+      } catch (e) {
+        log("❌ Error handler error:", e);
+      }
+    }
+
+    attemptRecovery(error, context) {
+      try {
+        log(`🔧 AI Recovery: Attempting to recover from ${context}...`);
+
+        switch(context) {
+          case 'storage':
+            this.performSelfHeal('memory_leak', {});
+            break;
+          case 'validation':
+            this.performSelfHeal('accuracy_drift', {});
+            break;
+          case 'session':
+            this.performSelfHeal('session_corruption', {});
+            break;
+          default:
+            DOMCache.clear();
+            this.validateSessions();
+            this.detectDataCorruption();
+        }
+
+        this.logRecovery(context, 'Auto-recovery attempted', { error: error.message });
+
+      } catch (e) {
+        log("❌ Recovery attempt error:", e);
+      }
+    }
+
+    logRecovery(type, message, data) {
+      const recoveryEntry = {
+        type,
+        message,
+        data,
+        timestamp: new Date().toISOString()
+      };
+
+      this.recoveryLog.push(recoveryEntry);
+      if (this.recoveryLog.length > 50) {
+        this.recoveryLog.shift();
+      }
+      store(KEYS.AI_RECOVERY_LOG, this.recoveryLog);
+    }
+
+    updateHealthStatus() {
+      try {
+        const score = this.calculateReliabilityScore();
+
+        if (score >= 95) {
+          this.health.status = 'excellent';
+        } else if (score >= 80) {
+          this.health.status = 'good';
+        } else if (score >= 60) {
+          this.health.status = 'degraded';
+        } else {
+          this.health.status = 'critical';
+        }
+
+        store(KEYS.AI_HEALTH, this.health);
+
+      } catch (e) {
+        log("❌ Health status update error:", e);
+      }
+    }
+
+    protect() {
+      if (!this.config.protection_enabled) return;
+
+      this.detectDataCorruption();
+      this.validateSessions();
+      this.preventMemoryLeaks();
+      this.checkIntegrity();
+
+      this.stats.protections_applied++;
+      this.saveState();
+    }
+
+    detectDataCorruption() {
+      try {
+        const committed = retrieve(KEYS.DAILY_COMMITTED, 0);
+        const count = retrieve(KEYS.COUNT, 0);
+        const sessions = retrieve(KEYS.SESSIONS, []);
+        let fixed = false;
+
+        if (committed < 0 || committed > 86400) {
+          log(`🔧 Fixing corrupted timer: ${committed}`);
+          store(KEYS.DAILY_COMMITTED, Math.max(0, Math.min(86400, committed)));
+          fixed = true;
+        }
+
+        if (count < 0) {
+          log(`🔧 Fixing negative counter: ${count}`);
+          store(KEYS.COUNT, 0);
+          fixed = true;
+        }
+
+        if (!Array.isArray(sessions)) {
+          log(`🔧 Fixing corrupted sessions array`);
+          store(KEYS.SESSIONS, []);
+          fixed = true;
+        }
+
+        if (fixed) this.stats.auto_fixes++;
+        return fixed;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    validateSessions() {
+      try {
+        const sessions = retrieve(KEYS.SESSIONS, []);
+        let cleaned = false;
+
+        const validSessions = sessions.filter(s => {
+          if (s.duration < 0 || s.duration > 86400) {
+            log(`🔧 Removing invalid session: duration=${s.duration}`);
+            cleaned = true;
+            return false;
+          }
+          if (!s.date || isNaN(new Date(s.date).getTime())) {
+            log(`🔧 Removing invalid session: bad date`);
+            cleaned = true;
+            return false;
+          }
+          return true;
+        });
+
+        if (cleaned) {
+          store(KEYS.SESSIONS, validSessions);
+          this.stats.auto_fixes++;
+          log(`✅ Cleaned ${sessions.length - validSessions.length} invalid sessions`);
+        }
+        return cleaned;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    preventMemoryLeaks() {
+      try {
+        if (this.anomalies.length > 100) {
+          this.anomalies = this.anomalies.slice(-100);
+          store(KEYS.AI_ANOMALIES, this.anomalies);
+        }
+        if (this.insights.length > 50) {
+          this.insights = this.insights.slice(-50);
+          store(KEYS.AI_INSIGHTS, this.insights);
+        }
+        if (this.errorLog.length > 100) {
+          this.errorLog = this.errorLog.slice(-100);
+          store(KEYS.AI_ERROR_LOG, this.errorLog);
+        }
+        if (Date.now() - this.lastCheck > 60000) {
+          DOMCache.clear();
+          this.lastCheck = Date.now();
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    checkIntegrity() {
+      try {
+        const history = retrieve(KEYS.HISTORY, {});
+        let fixed = false;
+
+        for (const [date, value] of Object.entries(history)) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            delete history[date];
+            fixed = true;
+            continue;
+          }
+          if (value < 0 || value > 86400) {
+            history[date] = Math.max(0, Math.min(86400, value));
+            fixed = true;
+          }
+        }
+
+        if (fixed) {
+          store(KEYS.HISTORY, history);
+          this.stats.auto_fixes++;
+        }
+        return !fixed;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    learn() {
+      if (!this.config.learning_enabled) return;
+      this.analyzePatterns();
+      this.buildUserProfile();
+      this.saveState();
+    }
+
+    analyzePatterns() {
+      try {
+        const sessions = retrieve(KEYS.SESSIONS, []);
+        if (sessions.length < 5) return;
+
+        const taskPatterns = {};
+
+        sessions.forEach(session => {
+          const taskName = session.taskName || 'Unknown';
+
+          if (!taskPatterns[taskName]) {
+            taskPatterns[taskName] = {
+              count: 0,
+              total_duration: 0,
+              avg_duration: 0,
+              success_rate: 0,
+              submitted: 0,
+              skipped: 0,
+              expired: 0
+            };
+          }
+
+          const pattern = taskPatterns[taskName];
+          pattern.count++;
+
+          if (session.action === 'submitted' || session.action.includes('manual_reset')) {
+            pattern.total_duration += session.duration;
+            pattern.submitted++;
+          } else if (session.action === 'skipped') {
+            pattern.skipped++;
+          } else if (session.action === 'expired') {
+            pattern.expired++;
+          }
+
+          pattern.avg_duration = pattern.submitted > 0 ?
+            Math.round(pattern.total_duration / pattern.submitted) : 0;
+          pattern.success_rate = pattern.count > 0 ?
+            Math.round((pattern.submitted / pattern.count) * 100) : 0;
+        });
+
+        store(KEYS.AI_PATTERNS, taskPatterns);
+        this.stats.patterns_learned = Object.keys(taskPatterns).length;
+        return taskPatterns;
+      } catch (e) {
+        return {};
+      }
+    }
+
+    buildUserProfile() {
+      try {
+        const sessions = retrieve(KEYS.SESSIONS, []);
+        const history = retrieve(KEYS.HISTORY, {});
+
+        if (sessions.length === 0) return;
+
+        const profile = {
+          total_sessions: sessions.length,
+          total_time_worked: Object.values(history).reduce((a, b) => a + b, 0),
+          average_daily_hours: 0,
+          efficiency_score: 0,
+          consistency_score: 0
+        };
+
+        const daysTracked = Object.keys(history).length;
+        if (daysTracked > 0) {
+          profile.average_daily_hours = (profile.total_time_worked / daysTracked / 3600).toFixed(2);
+        }
+
+        const submitted = sessions.filter(s => s.action === 'submitted' || s.action.includes('manual_reset')).length;
+        profile.efficiency_score = Math.round((submitted / sessions.length) * 100);
+
+        this.profile = profile;
+        store(KEYS.AI_PROFILE, profile);
+        return profile;
+      } catch (e) {
+        return {};
+      }
+    }
+
+    predict() {
+      if (!this.config.prediction_enabled) return;
+
+      if (this.config.predictive_failure) {
+        this.predictFailures();
+      }
+
+      this.stats.predictions_made++;
+      this.saveState();
+    }
+
+    optimize() {
+      if (!this.config.optimization_enabled) return;
+
+      if (this.config.performance_monitor) {
+        this.monitorPerformance();
+      }
+
+      this.stats.optimizations++;
+      this.saveState();
+    }
+
+    saveState() {
+      try {
+        store(KEYS.AI_STATS, this.stats);
+        store(KEYS.AI_CONFIG, this.config);
+        store(KEYS.AI_HEALTH, this.health);
+        store(KEYS.AI_PERFORMANCE, this.performanceMetrics);
+      } catch (e) {
+        log("❌ AI save error", e);
+      }
+    }
+
+    getStatus() {
+      return {
+        enabled: CONFIG.AI_ENABLED,
+        version: '5.0.0-ULTIMATE-AI',
+        counting_mode: CONFIG.COUNTING_MODE,
+        stats: this.stats,
+        performance: this.performanceMetrics,
+        health: this.health,
+        profile: this.profile,
+        predictions: this.predictions,
+        insights: this.insights.slice(0, 5),
+        anomalies: this.anomalies.slice(0, 5),
+        recent_errors: this.errorLog.slice(-5),
+        recent_recoveries: this.recoveryLog.slice(-5),
+      };
+    }
+
+    run() {
+      try {
+        this.protect();
+        this.learn();
+        this.predict();
+        this.optimize();
+
+        if (this.config.stability_checks) {
+          this.checkStability();
+        }
+
+        if (this.config.reliability_scoring) {
+          this.calculateReliabilityScore();
+        }
+
+      } catch (e) {
+        log("❌ AI run error", e);
+        this.handleError(e, 'ai_run');
+      }
+    }
+  }
+
+  // Initialize AI Engine
+  const AI = new AIEngine();
+  window.AI = AI;
+
+  if (CONFIG.AI_ENABLED) {
+    setInterval(() => {
+      AI.run();
+    }, CONFIG.AI_CHECK_INTERVAL);
+
+    setTimeout(() => {
+      AI.run();
+    }, 5000);
+  }
+
+  // ============================================================================
+  // 🔧 TIMER PARSING - Enhanced with 20+ patterns
+  // ============================================================================
+  function parseAWSTimer() {
     try {
-      const currentTaskId = getTaskIdFromUrl();
-      const now = Date.now();
+      const bodyText = document.body.innerText || document.body.textContent || "";
+      const cleanText = bodyText.replace(/\s+/g, " ").trim();
 
-      if (!forceRefresh &&
-          taskNameCache.taskId === currentTaskId &&
-          taskNameCache.name &&
-          (now - taskNameCache.timestamp) < CONFIG.TASK_NAME_CACHE_MS) {
-        return taskNameCache.name;
+      const patterns = [
+        /Task\s+time[:\s]+(\d+):(\d+)\s+of\s+(\d+)\s*Min\s+(\d+)\s*Sec/i,
+        /Task\s+time[:\s]+(\d+):(\d+)\s+(?:of|\/)\s+(\d+):(\d+)/i,
+        /Task\s+time[:\s]+(\d+):(\d+)/i,
+        /Time\s+(?:Remaining|Elapsed)[:\s]+(\d+):(\d+)/i,
+        /Duration[:\s]+(\d+)\s*min(?:ute)?s?\s+(\d+)\s*sec(?:ond)?s?/i,
+        /Timer[:\s]+(\d+):(\d+):(\d+)/i,
+        /Elapsed[:\s]+(\d+)m\s+(\d+)s/i,
+        /(\d+):(\d+)\s*\/\s*(\d+):(\d+)/i,
+        /Time[:\s]+(\d+):(\d+)/i,
+        /(?:Task|Work)\s+Duration[:\s]+(\d+):(\d+)/i,
+        /^(\d+):(\d+)$/m,
+        /(\d+)\s*minutes?\s+(\d+)\s*seconds?/i,
+        /(\d+)m\s*(\d+)s/i,
+        /Time\s+Left[:\s]+(\d+):(\d+)/i,
+        /Countdown[:\s]+(\d+):(\d+)/i,
+        /(\d+):(\d+)\s+left/i,
+        /(\d+):(\d+)\s+remaining/i,
+        /Active\s+time[:\s]+(\d+):(\d+)/i,
+        /Work\s+time[:\s]+(\d+):(\d+)/i,
+        /Session[:\s]+(\d+):(\d+)/i,
+      ];
+
+      for (const pattern of patterns) {
+        const m = cleanText.match(pattern);
+        if (m) {
+          let current, limit;
+
+          if (m.length === 5 && m[3] && m[4]) {
+            current = (+m[1]) * 60 + (+m[2]);
+            limit = (+m[3]) * 60 + (+m[4]);
+          } else if (m.length === 4 && m[1] && m[2] && m[3]) {
+            current = (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]);
+            limit = 3600;
+          } else if (m.length === 3 || m.length === 2) {
+            current = (+m[1]) * 60 + (+m[2]);
+            limit = 3600;
+          } else {
+            continue;
+          }
+
+          if (current >= 0 && current <= 86400) {
+            log(`✅ Parsed AWS timer: ${fmt(current)} / ${fmt(limit)}`);
+            return { current, limit, remaining: limit - current };
+          }
+        }
       }
 
-      if (taskNameCache.taskId && taskNameCache.taskId !== currentTaskId) {
-        clearTaskNameCache();
+      const selectors = [
+        '.timer', '.task-timer', '.elapsed-time',
+        '[class*="time"]', '[class*="timer"]',
+        '[data-timer]', '[aria-label*="time"]',
+        '[class*="duration"]', '[id*="timer"]'
+      ];
+
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el) {
+          const text = el.innerText || "";
+          const m = text.match(/(\d+):(\d+)/);
+          if (m) {
+            const current = (+m[1]) * 60 + (+m[2]);
+            if (current >= 0 && current <= 86400) {
+              log(`✅ Parsed AWS timer from element: ${fmt(current)}`);
+              return { current, limit: 3600, remaining: 3600 - current };
+            }
+          }
+        }
       }
 
-      const bodyText = getBodyText();
+      return null;
+    } catch (e) {
+      log("❌ parseAWSTimer error:", e);
+      return null;
+    }
+  }
 
+  function hasTaskExpiredOnPage() {
+    try {
+      const t = (document.body.innerText || "").toLowerCase();
+      return t.includes("task has expired") ||
+             t.includes("task expired") ||
+             t.includes("time is up") ||
+             t.includes("session expired");
+    } catch (e) { return false; }
+  }
+
+  function getTaskName() {
+    try {
+      const bodyText = document.body.innerText || "";
       let match = bodyText.match(/Task description:\s*([^\n]+)/i);
-      if (match && match[1] && match[1].trim().length > 5 && match[1].trim().length < 200) {
-        const detectedName = match[1].trim();
-        taskNameCache = { taskId: currentTaskId, name: detectedName, timestamp: now };
-        log('Task name detected (method 1):', detectedName);
-        return detectedName;
+      if (match && match[1] && match[1].trim().length > 5) {
+        return sanitizeHTML(match[1].trim());
       }
 
       const selectors = [
@@ -494,537 +1262,580 @@
         '.awsui-util-d-ib',
         '[class*="task-title"]',
         '[class*="task-description"]',
-        '.cswui-header-name',
-        'h1',
-        'h2'
+        '.cswui-header-name'
       ];
 
       for (const sel of selectors) {
         const elements = document.querySelectorAll(sel);
         for (const el of elements) {
-          const text = (el.innerText || el.textContent || '').trim();
-          if (text.length > 10 &&
-              text.length < 200 &&
-              !text.includes('\n') &&
-              !text.toLowerCase().includes('task time') &&
-              !text.toLowerCase().includes('utilization') &&
-              !/^\d+:\d+/.test(text)) {
-            const detectedName = text;
-            taskNameCache = { taskId: currentTaskId, name: detectedName, timestamp: now };
-            log('Task name detected (method 2):', detectedName);
-            return detectedName;
+          const text = (el.innerText || "").trim();
+          if (text.length > 10 && text.length < 200 && !text.includes('\n')) {
+            return sanitizeHTML(text);
           }
         }
       }
 
-      const taskParam = new URLSearchParams(window.location.search).get('task');
-      if (taskParam && taskParam.length > 5) {
-        const detectedName = `Task: ${taskParam}`;
-        taskNameCache = { taskId: currentTaskId, name: detectedName, timestamp: now };
-        log('Task name from URL:', detectedName);
-        return detectedName;
-      }
-
-      const fallbackName = `Task-${currentTaskId.substring(Math.max(0, currentTaskId.length - 8))}`;
-      taskNameCache = { taskId: currentTaskId, name: fallbackName, timestamp: now };
-      log('Task name fallback:', fallbackName);
-      return fallbackName;
-
+      return `Task-${Date.now().toString().slice(-6)}`;
     } catch (e) {
-      log('getTaskName error', e);
       return `Task-${Date.now().toString().slice(-6)}`;
     }
   }
 
-  async function getTaskNameWithRetry(attempts = CONFIG.TASK_NAME_RETRY_ATTEMPTS) {
-    for (let i = 0; i < attempts; i++) {
-      const name = getTaskName(true);
-      if (name && !name.startsWith('Task-')) {
-        log(`✓ Task name found on attempt ${i + 1}:`, name);
-        return name;
-      }
-      if (i < attempts - 1) {
-        const delay = CONFIG.TASK_NAME_RETRY_DELAY * Math.pow(2, i);
-        log(`Retrying task name detection in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-    }
-    const fallback = getTaskName(true);
-    log('⚠️ Using fallback task name:', fallback);
-    return fallback;
-  }
-
-  const Shield = (function() {
-    window.__SM_DOM_EVENTS__ = window.__SM_DOM_EVENTS__ || [];
-    function pushDom() { const now = performance.now(); window.__SM_DOM_EVENTS__.push(now); window.__SM_DOM_EVENTS__ = window.__SM_DOM_EVENTS__.filter(t => now - t < 1000); return window.__SM_DOM_EVENTS__.length; }
-    return {
-      pushDom,
-      isLikelyVideoNoise() { const vids = document.querySelectorAll ? document.querySelectorAll('video').length : 0; const evs = window.__SM_DOM_EVENTS__.length; return (vids > 0 && evs > 25) || evs > 60; },
-      containsAWSTimerKeywords(text) { if (!text) return false; const t = text.toLowerCase(); return t.includes('task') && (t.includes('time') || t.includes('min') || t.includes('sec')); }
-    };
-  })();
-
-  function parseAWSTimer() {
-    try {
-      const bodyText = getBodyText();
-      const cleanText = bodyText.replace(/\s+/g, ' ').trim();
-      if (!Shield.containsAWSTimerKeywords(cleanText)) return null;
-
-      let m = cleanText.match(/Task\s+time[:\s]+(\d+):(\d+)\s+of\s+(\d+)\s*Min\s+(\d+)\s*Sec/i);
-      if (m) { const current = (+m[1])*60 + (+m[2]); const limit = (+m[3])*60 + (+m[4]); return { current, limit, remaining: limit - current }; }
-      m = cleanText.match(/Task\s+time[:\s]+(\d+):(\d+)\s+(?:of|\/)\s+(\d+):(\d+)/i);
-      if (m) { const current = (+m[1])*60 + (+m[2]); const limit = (+m[3])*60 + (+m[4]); return { current, limit, remaining: limit - current }; }
-      m = cleanText.match(/Task\s+time[:\s]+(\d+):(\d+)/i);
-      if (m) { const current = (+m[1])*60 + (+m[2]); return { current, limit: 3600, remaining: 3600 - current }; }
-      return null;
-    } catch (e) { log('parseAWSTimer err', e); return null; }
-  }
-
-  function hasTaskExpiredOnPage() {
-    try {
-      const t = getBodyText().toLowerCase();
-      if (!t) return false;
-      return (t.includes('task has expired') || t.includes('task expired'));
-    } catch (e) { return false; }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Session validation
-  // ---------------------------------------------------------------------------
-  function validateSession(session) {
-    if (!session || typeof session !== 'object') return false;
-    if (!session.id || !session.date) return false;
-    if (typeof session.duration !== 'number' || session.duration < 0 || session.duration > 86400) return false;
-    if (!session.action || typeof session.action !== 'string') return false;
-    return true;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Sessions & analytics
-  // ---------------------------------------------------------------------------
-  function pushSessionRecord(rec) {
-    try {
-      const sessions = retrieve(KEYS.SESSIONS, []) || [];
-
-      if (!rec.taskName) {
-        if (activeTask && activeTask.taskName) {
-          rec.taskName = activeTask.taskName;
-        } else {
-          rec.taskName = getTaskName(true);
-        }
-      }
-
-      sessions.unshift(rec);
-      if (sessions.length > CONFIG.SESSIONS_LIMIT) sessions.length = CONFIG.SESSIONS_LIMIT;
-      store(KEYS.SESSIONS, sessions);
-      log('Session recorded:', rec.taskName, rec.action);
-    } catch (e) { log('pushSession err', e); }
-  }
-
   function updateAnalytics(event, data = {}) {
     if (!CONFIG.ENABLE_ANALYTICS) return;
-    try {
-      const analytics = retrieve(KEYS.ANALYTICS, { total_tasks_completed: 0, total_tasks_skipped: 0, total_tasks_expired: 0, total_time_worked: 0, longest_session: 0, last_activity: null });
-      const now = new Date();
-      switch(event) {
-        case 'task_completed': analytics.total_tasks_completed++; analytics.total_time_worked += (data.duration || 0); if (data.duration > analytics.longest_session) analytics.longest_session = data.duration; break;
-        case 'task_skipped': analytics.total_tasks_skipped++; break;
-        case 'task_expired': analytics.total_tasks_expired++; break;
-      }
-      analytics.last_activity = now.toISOString();
-      store(KEYS.ANALYTICS, analytics);
-    } catch (e) {
-      log('updateAnalytics error', e);
+
+    const analytics = retrieve(KEYS.ANALYTICS, {
+      total_tasks_completed: 0,
+      total_tasks_skipped: 0,
+      total_tasks_expired: 0,
+      total_time_worked: 0,
+      longest_session: 0,
+      last_activity: null
+    });
+
+    const now = new Date();
+
+    switch(event) {
+      case 'task_completed':
+        analytics.total_tasks_completed++;
+        analytics.total_time_worked += (data.duration || 0);
+        if (data.duration > analytics.longest_session) {
+          analytics.longest_session = data.duration;
+        }
+        break;
+      case 'task_skipped':
+        analytics.total_tasks_skipped++;
+        break;
+      case 'task_expired':
+        analytics.total_tasks_expired++;
+        break;
     }
+
+    analytics.last_activity = now.toISOString();
+    store(KEYS.ANALYTICS, analytics);
   }
 
-  // ---------------------------------------------------------------------------
-  // Validation & diagnostics
-  // ---------------------------------------------------------------------------
-  function validateAndFixData() {
-    log('Running data validation...');
-    const issues = [];
-    let committed = retrieve(KEYS.DAILY_COMMITTED, 0);
-    if (committed < 0) { issues.push('Negative time detected - resetting to 0'); store(KEYS.DAILY_COMMITTED, 0); committed = 0; }
-    if (committed > 86400) { issues.push('Time exceeds 24 hours - capping at 24h'); store(KEYS.DAILY_COMMITTED, 86400); }
-
-    let count = retrieve(KEYS.COUNT, 0);
-    if (count < 0) { issues.push('Negative count detected - resetting to 0'); store(KEYS.COUNT, 0); }
-
-    const history = retrieve(KEYS.HISTORY, {});
-    let historyFixed = false;
-    for (const [date, value] of Object.entries(history)) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { issues.push(`Invalid date format: ${date} - removing`); delete history[date]; historyFixed = true; }
-      if (value < 0 || value > 86400) { issues.push(`Invalid time for ${date}: ${value} - capping`); history[date] = Math.max(0, Math.min(86400, value)); historyFixed = true; }
-    }
-    if (historyFixed) store(KEYS.HISTORY, history);
-
-    const sessions = retrieve(KEYS.SESSIONS, []);
-    if (!Array.isArray(sessions)) {
-      issues.push('Sessions corrupted - resetting');
-      store(KEYS.SESSIONS, []);
-    } else {
-      const validSessions = sessions.filter(validateSession);
-      if (validSessions.length !== sessions.length) {
-        issues.push(`Removed ${sessions.length - validSessions.length} invalid sessions`);
-        store(KEYS.SESSIONS, validSessions);
-      }
-    }
-
-    if (issues.length > 0) log('Data issues found and fixed:', issues); else log('Data validation passed ✓');
-
-    checkStorageSize();
-
-    return issues;
-  }
-
-  function runDiagnostics() {
-    const updateInfo = retrieve(KEYS.UPDATE_AVAILABLE);
-    const diag = {
-      version: '3.7-ultra-stable',
-      update_available: updateInfo?.version || 'No',
-      last_update_check: retrieve(KEYS.LAST_UPDATE_CHECK) || 'Never',
-      localStorage_size: (JSON.stringify(localStorage).length / 1024).toFixed(2) + ' KB',
-      localStorage_percent: ((JSON.stringify(localStorage).length / (5 * 1024 * 1024)) * 100).toFixed(1) + '%',
-      active_task: activeTask ? 'Yes (' + fmt(activeTask.awsCurrent) + ')' : 'No',
-      active_task_name: activeTask ? activeTask.taskName : 'N/A',
-      active_task_status: activeTask ? activeTask.status : 'N/A',
-      cached_task_name: taskNameCache.name || 'N/A',
-      cache_age_ms: taskNameCache.timestamp ? Date.now() - taskNameCache.timestamp : 'N/A',
-      body_text_cache_age: bodyTextCache.timestamp ? Date.now() - bodyTextCache.timestamp : 'N/A',
-      is_task_page: isTaskPage(),
-      is_home_page: isHomePage(),
-      daily_committed: fmt(retrieve(KEYS.DAILY_COMMITTED, 0)),
-      count: retrieve(KEYS.COUNT, 0),
-      sessions_count: (retrieve(KEYS.SESSIONS, []) || []).length,
-      last_aws_timer: lastAWSData ? fmt(lastAWSData.current) + ' / ' + fmt(lastAWSData.limit) : 'N/A',
-      observers_active: !!(footerObserver && buttonsObserver)
-    };
-    console.log('=== SAGEMAKER DIAGNOSTICS (ULTRA-STABLE) ===');
-    console.table(diag);
-
-    console.log('\n=== HEALTH CHECKS ===');
-    console.log('✓ LocalStorage available:', typeof localStorage !== 'undefined');
-    console.log('✓ SessionStorage available:', typeof sessionStorage !== 'undefined');
-    console.log('✓ Footer observer active:', !!footerObserver);
-    console.log('✓ Buttons observer active:', !!buttonsObserver);
-    console.log('✓ Task name cache:', taskNameCache.name ? 'CACHED' : 'EMPTY');
-    console.log('✓ Body text cache:', bodyTextCache.text ? 'ACTIVE' : 'EMPTY');
-    console.log('✓ Home floating icon:', !!document.getElementById('sm-home-floating-icon'));
-    console.log('✓ Update available:', updateInfo ? `Yes (v${updateInfo.version})` : 'No');
-
-    const analytics = retrieve(KEYS.ANALYTICS, {});
-    if (analytics && Object.keys(analytics).length > 0) {
-      console.log('\n=== ANALYTICS SUMMARY ===');
-      console.log('Total tasks completed:', analytics.total_tasks_completed || 0);
-      console.log('Total tasks skipped:', analytics.total_tasks_skipped || 0);
-      console.log('Total tasks expired:', analytics.total_tasks_expired || 0);
-      console.log('Total time worked:', fmt(analytics.total_time_worked || 0));
-      console.log('Longest session:', fmt(analytics.longest_session || 0));
-      console.log('Last activity:', analytics.last_activity || 'N/A');
-    }
-
-    console.log('\n✅ Diagnostics complete! (Ultra-Stable Version)');
-    return diag;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Task management
-  // ---------------------------------------------------------------------------
+  // ============================================================================
+  // 🎯 TASK MANAGEMENT
+  // ============================================================================
   let activeTask = null;
-  let lastTaskId = null;
 
-  function getTaskIdFromUrl() { return window.location.pathname + window.location.search; }
+  function getTaskIdFromUrl() {
+    return window.location.pathname + window.location.search;
+  }
 
   function startNewTaskFromAWS(awsData) {
     const id = getTaskIdFromUrl();
-
-    if (lastTaskId && lastTaskId !== id) {
-      clearTaskNameCache();
-    }
-
-    const taskName = getTaskName(true);
+    const taskName = getTaskName();
     activeTask = {
       id,
       taskName,
       awsCurrent: awsData.current,
       awsLimit: awsData.limit,
       lastAws: awsData.current,
-      status: 'active',
+      status: "active",
       createdAt: Date.now(),
-      taskNameRefreshed: Date.now()
+      lastUpdate: Date.now()
     };
-    lastTaskId = id;
 
-    getTaskNameWithRetry().then(betterName => {
-      if (activeTask && activeTask.id === id && betterName !== taskName && !betterName.startsWith('Task-')) {
-        activeTask.taskName = betterName;
-        log('✓ Task name improved:', betterName);
-      }
-    }).catch(err => log('Task name retry failed:', err));
+    if (CONFIG.FIX_REFRESH_LOSS) {
+      store(KEYS.ACTIVE_TASK, activeTask);
+    }
 
-    log('✅ New task started:', taskName, 'ID:', id);
+    log(`✅ New task started: ${taskName} (${fmt(awsData.current)} / ${fmt(awsData.limit)})`);
     return activeTask;
   }
 
   function updateActiveTaskFromAWS(awsData) {
     if (!activeTask) return startNewTaskFromAWS(awsData);
-    const id = getTaskIdFromUrl();
 
+    const id = getTaskIdFromUrl();
     if (activeTask.id !== id) {
-      clearTaskNameCache();
       activeTask = null;
       return startNewTaskFromAWS(awsData);
     }
 
-    if (typeof awsData.current === 'number') {
-      activeTask.status = awsData.current === activeTask.lastAws ? 'paused' : 'active';
+    if (typeof awsData.current === "number") {
+      activeTask.status = awsData.current === activeTask.lastAws ? "paused" : "active";
       activeTask.awsCurrent = awsData.current;
       activeTask.awsLimit = awsData.limit;
       activeTask.lastAws = awsData.current;
+      activeTask.lastUpdate = Date.now();
 
-      if (!activeTask.taskNameRefreshed || (Date.now() - activeTask.taskNameRefreshed) > 5000) {
-        const refreshedName = getTaskName(true);
-        if (refreshedName && refreshedName !== activeTask.taskName && !refreshedName.startsWith('Task-')) {
-          log('✓ Task name refreshed:', refreshedName);
-          activeTask.taskName = refreshedName;
-        }
-        activeTask.taskNameRefreshed = Date.now();
+      if (CONFIG.FIX_REFRESH_LOSS) {
+        store(KEYS.ACTIVE_TASK, activeTask);
       }
+
+      log(`🔄 Task updated: ${fmt(awsData.current)} / ${fmt(awsData.limit)} (${activeTask.status})`);
     }
+
     return activeTask;
   }
 
-  // ---------------------------------------------------------------------------
-  // Reset functions
-  // ---------------------------------------------------------------------------
-  let resetInProgress = false;
-  let lastResetTime = 0;
-
-  function performReset(resetType = 'both', source = 'manual') {
-    if (resetInProgress) return false;
-    resetInProgress = true;
+  function pushSessionRecord(rec) {
     try {
-      const currentDate = new Date().toISOString().split('T')[0];
-      const previousTimer = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
-
-      if (source === 'auto' || source === 'midnight') {
-        const lastDate = retrieve(KEYS.LAST_DATE);
-        if (previousTimer > 0 && lastDate && lastDate !== currentDate) {
-          saveToHistory(lastDate, previousTimer);
-        }
+      const sessions = retrieve(KEYS.SESSIONS, []) || [];
+      if (!rec.taskName && activeTask) {
+        rec.taskName = activeTask.taskName || getTaskName();
       }
-
-      switch(resetType) {
-        case 'timer': store(KEYS.DAILY_COMMITTED, 0); break;
-        case 'counter': store(KEYS.COUNT, 0); break;
-        case 'both': default: store(KEYS.DAILY_COMMITTED, 0); store(KEYS.COUNT, 0); break;
+      sessions.unshift(rec);
+      if (sessions.length > CONFIG.SESSIONS_LIMIT) {
+        sessions.length = CONFIG.SESSIONS_LIMIT;
       }
-
-      store(KEYS.LAST_DATE, currentDate);
-      store(KEYS.LAST_RESET, new Date().toISOString());
-
-      if (resetType === 'both' || source === 'auto' || source === 'midnight') {
-        setIgnoreTask(null);
-        clearTaskNameCache();
-        if (activeTask) {
-          pushSessionRecord({
-            id: activeTask.id,
-            taskName: activeTask.taskName,
-            date: new Date().toISOString(),
-            duration: activeTask.awsCurrent || 0,
-            action: source === 'manual' ? `manual_reset_${resetType}` : 'midnight_reset'
-          });
-          activeTask = null;
-          lastTaskId = null;
-        }
-      }
-
-      updateDisplay();
-      updateHomeFloatingIcon();
-      log('✓ Reset completed:', resetType, source);
-      return true;
-    } finally {
-      resetInProgress = false;
+      store(KEYS.SESSIONS, sessions);
+      log(`📝 Session recorded: ${rec.action} - ${fmt(rec.duration)}`);
+    } catch (e) {
+      log("❌ pushSession error:", e);
     }
+  }
+
+  // ============================================================================
+  // 🎯 CORE LOGIC: COMMIT (SUBMIT)
+  // ============================================================================
+  function commitActiveTask() {
+    if (!activeTask) {
+      log("⚠️ No active task to commit");
+      return 0;
+    }
+
+    const finalElapsed = activeTask.awsCurrent || 0;
+    if (finalElapsed <= 0) {
+      log("⚠️ Task has 0 duration, skipping commit");
+      activeTask = null;
+      return 0;
+    }
+
+    log(`✅ COMMITTING TASK (SUBMIT):`);
+    log(`   Task: ${activeTask.taskName}`);
+    log(`   Duration: ${fmt(finalElapsed)}`);
+    log(`   Action: Adding to timer AND counter`);
+
+    if (CONFIG.FIX_RACE_CONDITIONS) {
+      addToCommitQueue({
+        id: activeTask.id,
+        taskName: activeTask.taskName || getTaskName(),
+        duration: finalElapsed,
+        action: "submitted",
+        shouldCommitTime: true,
+        shouldCount: true
+      });
+    } else {
+      const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+      store(KEYS.DAILY_COMMITTED, committed + finalElapsed);
+
+      const c = (retrieve(KEYS.COUNT, 0) || 0) + 1;
+      store(KEYS.COUNT, c);
+
+      pushSessionRecord({
+        id: activeTask.id,
+        taskName: activeTask.taskName || getTaskName(),
+        date: new Date().toISOString(),
+        duration: finalElapsed,
+        action: "submitted"
+      });
+
+      updateAnalytics('task_completed', { duration: finalElapsed });
+
+      log(`✅ Timer: ${fmt(committed)} → ${fmt(committed + finalElapsed)}`);
+      log(`✅ Counter: ${c - 1} → ${c}`);
+    }
+
+    const id = activeTask.id;
+    activeTask = null;
+
+    if (CONFIG.FIX_REFRESH_LOSS) {
+      store(KEYS.ACTIVE_TASK, null);
+    }
+
+    if (getIgnoreTask() === id) setIgnoreTask(null);
+
+    updateDisplay();
+    return finalElapsed;
+  }
+
+  // ============================================================================
+  // 🎯 CORE LOGIC: DISCARD (RELEASE/SKIP/EXPIRE)
+  // ============================================================================
+  function discardActiveTask(reason) {
+    if (!activeTask) {
+      log("⚠️ No active task to discard");
+      return;
+    }
+
+    const duration = activeTask.awsCurrent || 0;
+
+    log(`❌ DISCARDING TASK (${reason.toUpperCase()}):`);
+    log(`   Task: ${activeTask.taskName}`);
+    log(`   Duration: ${fmt(duration)}`);
+    log(`   Action: NOT adding to timer or counter (submitted_only mode)`);
+
+    pushSessionRecord({
+      id: activeTask.id,
+      taskName: activeTask.taskName || getTaskName(),
+      date: new Date().toISOString(),
+      duration: duration,
+      action: reason || "discarded"
+    });
+
+    if (reason === 'expired') updateAnalytics('task_expired');
+    else if (reason === 'skipped') updateAnalytics('task_skipped');
+
+    log(`✅ Timer: No change (task not submitted)`);
+    log(`✅ Counter: No change (task not submitted)`);
+
+    const id = activeTask.id;
+    activeTask = null;
+
+    if (CONFIG.FIX_REFRESH_LOSS) {
+      store(KEYS.ACTIVE_TASK, null);
+    }
+
+    try {
+      setIgnoreTask(id, Date.now());
+    } catch (e) {
+      log(e);
+    }
+
+    updateDisplay();
+    log(`🔙 Timer goes back to last submitted total`);
+  }
+
+  // ============================================================================
+  // 📅 DAILY RESET
+  // ============================================================================
+  function checkDailyReset() {
+    const currentDate = todayStr();
+    const lastDate = retrieve(KEYS.LAST_DATE);
+
+    if (lastDate !== currentDate) {
+      log("🌅 New day detected - performing reset");
+      const previousTotal = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+
+      if (previousTotal > 0 && lastDate) {
+        saveToHistory(lastDate, previousTotal);
+        log(`📊 Saved to history: ${lastDate} = ${fmt(previousTotal)}`);
+      }
+
+      performReset("both", "auto");
+      return 0;
+    }
+
+    return retrieve(KEYS.DAILY_COMMITTED, 0);
   }
 
   function saveToHistory(dateStr, totalSeconds) {
     const history = retrieve(KEYS.HISTORY, {}) || {};
     history[dateStr] = totalSeconds;
+
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - CONFIG.MAX_HISTORY_DAYS);
-    const cutoffStr = cutoff.toISOString().split('T')[0];
+    const cutoffStr = cutoff.toISOString().split("T")[0];
+
     for (const d in history) {
       if (d < cutoffStr) delete history[d];
     }
+
     store(KEYS.HISTORY, history);
-    log('✓ Saved to history:', dateStr, fmt(totalSeconds));
   }
 
-  function checkDailyReset() {
-    const currentDate = new Date().toISOString().split('T')[0];
-    const lastDate = retrieve(KEYS.LAST_DATE);
-
-    if (lastDate !== currentDate) {
-      log('📅 New day detected - performing reset');
-      const previousTotal = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
-      if (previousTotal > 0 && lastDate) {
-        saveToHistory(lastDate, previousTotal);
-      }
-      performReset('both', 'auto');
-      return 0;
-    }
-    return retrieve(KEYS.DAILY_COMMITTED, 0);
-  }
-
-  function checkDailyAlert(totalSeconds) {
-    if (!CONFIG.DAILY_ALERT_HOURS || CONFIG.DAILY_ALERT_HOURS <= 0) return;
-    const threshold = CONFIG.DAILY_ALERT_HOURS * 3600;
-    const key = `sm_alert_${new Date().toISOString().split('T')[0]}`;
-    if (totalSeconds >= threshold && !sessionStorage.getItem(key)) {
-      sessionStorage.setItem(key, '1');
-      log(`🎯 Daily goal of ${CONFIG.DAILY_ALERT_HOURS} hours reached!`);
-    }
-  }
-
-  setInterval(() => {
+  // ============================================================================
+  // 🔧 ULTIMATE RESET SYSTEM - Continues AWS Tracking
+  // ============================================================================
+  function performReset(resetType = 'both', source = 'manual') {
     try {
-      const currentDate = new Date().toISOString().split('T')[0];
-      const lastDate = retrieve(KEYS.LAST_DATE);
-      if (lastDate && lastDate !== currentDate) {
-        log('⏰ Midnight check triggered');
-        checkDailyReset();
+      log(`🔄 Reset initiated: ${resetType} (${source})`);
+
+      // ✅ Step 1: Commit current task snapshot (if exists)
+      if (activeTask && activeTask.awsCurrent) {
+        const snapshot = activeTask.awsCurrent || 0;
+        log(`📸 Snapshot: ${fmt(snapshot)}`);
+
+        if (CONFIG.FIX_RACE_CONDITIONS) {
+          addToCommitQueue({
+            id: activeTask.id,
+            taskName: activeTask.taskName || getTaskName(),
+            duration: snapshot,
+            action: 'manual_reset_' + resetType,
+            shouldCommitTime: true,
+            shouldCount: true
+          });
+        } else {
+          const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+          store(KEYS.DAILY_COMMITTED, committed + snapshot);
+          const c = (retrieve(KEYS.COUNT, 0) || 0) + 1;
+          store(KEYS.COUNT, c);
+          pushSessionRecord({
+            id: activeTask.id,
+            taskName: activeTask.taskName || getTaskName(),
+            date: new Date().toISOString(),
+            duration: snapshot,
+            action: 'manual_reset_' + resetType
+          });
+          updateAnalytics('task_completed', { duration: snapshot });
+        }
       }
+
+      // ✅ Step 2: Reset counters (but KEEP activeTask alive for AWS tracking)
+      switch (resetType) {
+        case 'timer':
+          store(KEYS.DAILY_COMMITTED, 0);
+          break;
+        case 'counter':
+          store(KEYS.COUNT, 0);
+          break;
+        case 'both':
+        default:
+          store(KEYS.DAILY_COMMITTED, 0);
+          store(KEYS.COUNT, 0);
+          break;
+      }
+
+      store(KEYS.LAST_DATE, todayStr());
+      store(KEYS.LAST_RESET, new Date().toISOString());
+
+      // ✅ Step 3: Show success notification
+      const notification = document.createElement('div');
+      notification.style.cssText = `
+        position: fixed; top: 20px; right: 20px;
+        background: linear-gradient(135deg, #10b981, #059669);
+        color: white; padding: 16px 24px; border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3); z-index: 999999999;
+        font-family: system-ui; font-weight: 600;
+      `;
+      notification.innerHTML = `
+        <div style="font-size: 16px; margin-bottom: 8px;">✅ Reset Complete!</div>
+        <div style="font-size: 13px; opacity: 0.9;">
+          ${activeTask ?
+            `Current task continues tracking AWS timer (${fmt(activeTask.awsCurrent)})` :
+            'Navigate to a task to start tracking'}
+        </div>
+      `;
+      document.body.appendChild(notification);
+      setTimeout(() => {
+        notification.style.opacity = '0';
+        notification.style.transition = 'opacity 0.5s';
+        setTimeout(() => notification.remove(), 500);
+      }, 5000);
+
+      // ✅ Step 4: Update display (will show AWS time if on task page)
+      updateDisplay();
+      updateHomeDisplay();
+
+      log('✅ Reset complete!');
+      log(`   Committed: ${fmt(retrieve(KEYS.DAILY_COMMITTED, 0))}`);
+      log(`   Count: ${retrieve(KEYS.COUNT, 0)}`);
+      if (activeTask) {
+        log(`   Active task continues: ${fmt(activeTask.awsCurrent)}`);
+      }
+
+      return true;
+
     } catch (e) {
-      console.error('[SM] Midnight check error:', e);
+      console.error("❌ Reset error:", e);
+      return false;
     }
-  }, 60000);
-
-  // ---------------------------------------------------------------------------
-  // Commit & Discard
-  // ---------------------------------------------------------------------------
-  function commitActiveTask() {
-    if (!activeTask) return 0;
-    const finalElapsed = activeTask.awsCurrent || 0;
-
-    if (finalElapsed <= 0) {
-      activeTask = null;
-      lastTaskId = null;
-      clearTaskNameCache();
-      return 0;
-    }
-
-    const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
-    const newTotal = committed + finalElapsed;
-    store(KEYS.DAILY_COMMITTED, newTotal);
-    saveToHistory(new Date().toISOString().split('T')[0], newTotal);
-    checkDailyAlert(newTotal);
-
-    const c = (retrieve(KEYS.COUNT, 0) || 0) + 1;
-    store(KEYS.COUNT, c);
-
-    const finalTaskName = activeTask.taskName || getTaskName(true);
-
-    pushSessionRecord({
-      id: activeTask.id,
-      taskName: finalTaskName,
-      date: new Date().toISOString(),
-      duration: finalElapsed,
-      action: 'submitted'
-    });
-
-    updateAnalytics('task_completed', { duration: finalElapsed });
-
-    const id = activeTask.id;
-    activeTask = null;
-    lastTaskId = null;
-    clearTaskNameCache();
-
-    if (getIgnoreTask() === id) setIgnoreTask(null);
-
-    log('✅ Task committed:', finalTaskName, fmt(finalElapsed));
-    return finalElapsed;
   }
 
-  function discardActiveTask(reason) {
-    if (!activeTask) return;
+  function showResetDialog() {
+    const existing = document.getElementById("sm-reset-dialog");
+    if (existing) existing.remove();
 
-    const taskName = activeTask.taskName || getTaskName(true);
-    const rec = {
-      id: activeTask.id,
-      taskName: taskName,
-      date: new Date().toISOString(),
-      duration: activeTask.awsCurrent || 0,
-      action: reason || 'discarded'
+    const dialog = document.createElement("div");
+    dialog.id = "sm-reset-dialog";
+    dialog.innerHTML = `
+      <style>
+        #sm-reset-dialog { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 999999999; }
+        #sm-reset-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
+        #sm-reset-modal { position: relative; width: 360px; max-width: calc(100% - 32px); background: #fff; border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.3); overflow: hidden; font-family: system-ui; animation: slideIn 0.2s ease; }
+        @keyframes slideIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        #sm-reset-modal .header { padding: 16px 20px; background: linear-gradient(135deg, #dc2626, #ef4444); color: #fff; }
+        #sm-reset-modal h3 { margin: 0; font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+        #sm-reset-modal .body { padding: 20px; }
+        #sm-reset-modal .current-values { background: #f9fafb; padding: 12px 14px; border-radius: 8px; margin-bottom: 16px; border: 1px solid #e5e7eb; }
+        #sm-reset-modal .value { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; color: #374151; }
+        #sm-reset-modal .value strong { color: #111827; font-weight: 700; }
+        #sm-reset-modal .warning { background: #dbeafe; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 12px; color: #1e40af; border-left: 4px solid #3b82f6; }
+        #sm-reset-modal .options { display: flex; flex-direction: column; gap: 10px; }
+        #sm-reset-modal .option-btn { padding: 12px 16px; border: 1.5px solid #e5e7eb; border-radius: 8px; background: #fff; cursor: pointer; font-size: 13px; transition: all 0.15s; display: flex; align-items: center; gap: 10px; font-weight: 600; }
+        #sm-reset-modal .option-btn:hover { border-color: #dc2626; background: #fef2f2; transform: translateX(3px); }
+        #sm-reset-modal .footer { padding: 12px 20px; background: #f9fafb; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e5e7eb; }
+        #sm-reset-modal .cancel-btn { padding: 8px 16px; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.15s; }
+        #sm-reset-modal .cancel-btn:hover { background: #f3f4f6; border-color: #9ca3af; }
+        #sm-reset-modal .esc-hint { font-size: 10px; color: #6b7280; display: flex; align-items: center; gap: 4px; }
+        #sm-reset-modal .esc-key { padding: 2px 6px; background: #e5e7eb; border-radius: 3px; font-family: monospace; font-weight: 600; font-size: 10px; }
+      </style>
+
+      <div id="sm-reset-backdrop"></div>
+      <div id="sm-reset-modal">
+        <div class="header">
+          <h3>🔄 Reset Options</h3>
+        </div>
+        <div class="body">
+          <div class="current-values">
+            <div class="value">
+              <span>Timer:</span>
+              <strong>${fmt(retrieve(KEYS.DAILY_COMMITTED, 0) || 0)}</strong>
+            </div>
+            <div class="value">
+              <span>Counter:</span>
+              <strong>${retrieve(KEYS.COUNT, 0) || 0}</strong>
+            </div>
+          </div>
+          <div class="warning">
+            💡 <strong>Note:</strong> If you're on a task page, the AWS timer will continue tracking after reset.
+          </div>
+          <div class="options">
+            <button class="option-btn" data-reset="timer">
+              <span>⏱️</span>
+              <span>Reset Timer Only</span>
+            </button>
+            <button class="option-btn" data-reset="counter">
+              <span>🔢</span>
+              <span>Reset Counter Only</span>
+            </button>
+            <button class="option-btn" data-reset="both">
+              <span>🔄</span>
+              <span>Reset Both</span>
+            </button>
+          </div>
+        </div>
+        <div class="footer">
+          <div class="esc-hint">
+            <span>Press</span>
+            <span class="esc-key">ESC</span>
+          </div>
+          <button class="cancel-btn" id="reset-cancel">Cancel</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(dialog);
+
+    const escHandler = (e) => {
+      if (e.key === 'Escape' || e.keyCode === 27) {
+        e.stopPropagation();
+        e.preventDefault();
+        dialog.remove();
+        document.removeEventListener('keydown', escHandler, true);
+      }
     };
 
-    pushSessionRecord(rec);
+    document.addEventListener('keydown', escHandler, true);
 
-    if (reason === 'expired') updateAnalytics('task_expired');
-    else if (reason === 'skipped') updateAnalytics('task_skipped');
+    dialog.querySelector("#sm-reset-backdrop").addEventListener("click", () => {
+      dialog.remove();
+      document.removeEventListener('keydown', escHandler, true);
+    });
 
-    const id = activeTask.id;
-    activeTask = null;
-    lastTaskId = null;
-    clearTaskNameCache();
+    dialog.querySelector("#reset-cancel").addEventListener("click", () => {
+      dialog.remove();
+      document.removeEventListener('keydown', escHandler, true);
+    });
 
-    try { setIgnoreTask(id); } catch (e) {}
-
-    log('⚠️ Task discarded:', taskName, reason);
+    dialog.querySelectorAll(".option-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const resetType = btn.dataset.reset;
+        dialog.remove();
+        document.removeEventListener('keydown', escHandler, true);
+        performReset(resetType, "manual");
+      });
+    });
   }
 
-  // ---------------------------------------------------------------------------
-  // Submission interception
-  // ---------------------------------------------------------------------------
+  function getMsUntilMidnight() {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+    return tomorrow.getTime() - now.getTime();
+  }
+
+  function scheduleMidnightReset() {
+    const msUntilMidnight = getMsUntilMidnight();
+    setTimeout(() => {
+      log("🕛 Scheduled midnight reset triggered");
+      performReset("both", "midnight");
+      scheduleMidnightReset();
+    }, msUntilMidnight);
+  }
+
+  function backupMidnightCheck() {
+    const currentDate = todayStr();
+    const lastDate = retrieve(KEYS.LAST_DATE);
+    if (lastDate && lastDate !== currentDate) {
+      performReset("both", "midnight");
+    }
+  }
+
+  setInterval(backupMidnightCheck, 60000);
+
+  // ============================================================================
+  // 🔧 ENHANCED SUBMISSION DETECTION
+  // ============================================================================
   function initSubmissionInterceptor() {
-    if (typeof window.fetch === 'function') {
+    if (typeof window.fetch === "function") {
       const origFetch = window.fetch;
-      window.fetch = function(...args) {
+      window.fetch = function (...args) {
+        const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
+        const method = args[1]?.method || "GET";
+
         return origFetch.apply(this, args).then(response => {
           try {
-            const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
-            const method = args[1]?.method || 'GET';
-            if (method.toUpperCase() === 'POST' && response.ok && /submit|complete|finish/i.test(url)) {
-              setTimeout(() => {
-                log('📤 Submission detected via fetch');
+            if (method.toUpperCase() === "POST" && response.ok && CONFIG.FIX_DETECTION) {
+              const isTaskEndpoint =
+                /submit|complete|finish/i.test(url) ||
+                /task/i.test(url) ||
+                /labeling/i.test(url) ||
+                /annotation/i.test(url) ||
+                /response/i.test(url) ||
+                /answer/i.test(url) ||
+                /save/i.test(url) ||
+                /update/i.test(url);
+
+              if (isTaskEndpoint) {
+                log("📡 Detected submission via fetch");
                 commitActiveTask();
                 updateDisplay();
-                updateHomeFloatingIcon();
-              }, 100);
+              }
             }
           } catch (e) {
-            log('Fetch intercept error:', e);
+            log("❌ Fetch intercept error:", e);
           }
           return response;
-        }).catch(error => {
-          throw error;
         });
       };
     }
 
-    if (typeof XMLHttpRequest !== 'undefined') {
+    if (typeof XMLHttpRequest !== "undefined") {
       const origOpen = XMLHttpRequest.prototype.open;
       const origSend = XMLHttpRequest.prototype.send;
       const meta = new WeakMap();
-      XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+
+      XMLHttpRequest.prototype.open = function (method, url, ...rest) {
         meta.set(this, { method, url });
         return origOpen.call(this, method, url, ...rest);
       };
-      XMLHttpRequest.prototype.send = function(body) {
-        this.addEventListener('loadend', function() {
+
+      XMLHttpRequest.prototype.send = function (body) {
+        this.addEventListener("loadend", function () {
           try {
             const info = meta.get(this);
-            if (info && info.method.toUpperCase() === 'POST' && this.status >= 200 && this.status < 300 && /submit|complete|finish/i.test(info.url)) {
-              setTimeout(() => {
-                log('📤 Submission detected via XHR');
+            if (info && info.method.toUpperCase() === "POST" &&
+                this.status >= 200 && this.status < 300 && CONFIG.FIX_DETECTION) {
+              const isTaskEndpoint =
+                /submit|complete|finish/i.test(info.url) ||
+                /task/i.test(info.url) ||
+                /labeling/i.test(info.url) ||
+                /answer/i.test(info.url);
+
+              if (isTaskEndpoint) {
+                log("📡 Detected submission via XHR");
                 commitActiveTask();
                 updateDisplay();
-                updateHomeFloatingIcon();
-              }, 100);
+              }
             }
           } catch (e) {
-            log('XHR intercept error:', e);
+            log("❌ XHR intercept error:", e);
           }
         });
         return origSend.call(this, body);
@@ -1032,484 +1843,502 @@
     }
   }
 
-  initSubmissionInterceptor();
+  function wireTaskActionButtons() {
+    const btns = document.querySelectorAll('button, [role="button"]');
+    btns.forEach((el) => {
+      try {
+        const raw = (el.innerText || "").toLowerCase();
+        if (!raw) return;
 
-  // ---------------------------------------------------------------------------
-  // Home Page Detection & Floating Icon
-  // ---------------------------------------------------------------------------
-  function isHomePage() {
-    try {
-      const url = window.location.href.toLowerCase();
-      const path = window.location.pathname.toLowerCase();
+        const submitKeywords = [
+          'submit', 'complete', 'finish', 'done', 'send',
+          'confirm', 'save', 'next', 'continue', 'proceed',
+          'accept', 'approve', 'validate', 'verify', 'commit',
+          'finalize', 'conclude', 'end', 'close', 'mark complete'
+        ];
 
-      if (url.includes('/labeling-jobs') || url.includes('/jobs') || path === '/' || path === '') {
-        return true;
-      }
+        const isSubmitButton = CONFIG.FIX_DETECTION &&
+          submitKeywords.some(kw => raw.includes(kw));
 
-      const bodyText = getBodyText();
-      if (bodyText.includes('Jobs (') || bodyText.includes('Task title') || bodyText.includes('Customer ID')) {
-        return true;
-      }
+        if (isSubmitButton && !el.__sm_submit_bound) {
+          el.__sm_submit_bound = true;
+          el.addEventListener("click", () => {
+            setTimeout(() => {
+              log("🖱️ Submit button clicked");
+              commitActiveTask();
+              updateDisplay();
+            }, 100);
+          });
+        }
 
-      const hasJobsTable = document.querySelector('table') &&
-                          (document.querySelector('th')?.innerText.includes('Task title') ||
-                           document.querySelector('th')?.innerText.includes('Status'));
+        if (raw.includes("skip") && !el.__sm_skip_bound) {
+          el.__sm_skip_bound = true;
+          el.addEventListener("click", () => {
+            log("🖱️ Skip button clicked");
+            discardActiveTask("skipped");
+            updateDisplay();
+          });
+        }
 
-      if (hasJobsTable) return true;
-
-      return false;
-    } catch (e) {
-      return false;
-    }
+        if ((raw.includes("stop") || raw.includes("release")) && !el.__sm_release_bound) {
+          el.__sm_release_bound = true;
+          el.addEventListener("click", () => {
+            log("🖱️ Release/Stop button clicked");
+            discardActiveTask("released");
+            updateDisplay();
+          });
+        }
+      } catch (e) {}
+    });
   }
 
-  const homeFloatingIcon = document.createElement('div');
-homeFloatingIcon.id = 'sm-home-floating-icon';
-homeFloatingIcon.innerHTML = `
-  <style>
-    #sm-home-floating-icon {
-      position: fixed;
-      bottom: 20px;
-      left: 20px;
-      min-width: 160px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      border-radius: 12px;
-      display: none;
-      padding: 12px 14px;
-      cursor: pointer;
-      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.35);
-      z-index: 999999;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      animation: slideIn 0.4s ease-out;
-      font-family: system-ui, -apple-system, sans-serif;
+  // ============================================================================
+  // 🎯 PAGE DETECTION
+  // ============================================================================
+  function isHomePage() {
+    const url = window.location.href.toLowerCase();
+    const path = window.location.pathname.toLowerCase();
+
+    if (path === '/' || path === '/home' || path === '/dashboard') {
+      return true;
     }
 
-    @keyframes slideIn {
-      from { transform: translateX(-100%); opacity: 0; }
-      to { transform: translateX(0); opacity: 1; }
+    if (url.includes('sagemaker.aws') &&
+        !path.includes('/task') &&
+        !path.includes('/job') &&
+        !path.includes('/labeling') &&
+        !path.includes('/work')) {
+      return true;
     }
 
-    #sm-home-floating-icon:hover {
-      transform: translateY(-3px) scale(1.02);
-      box-shadow: 0 10px 32px rgba(102, 126, 234, 0.5);
+    return false;
+  }
+
+  function isJobsListPage() {
+    const url = window.location.href.toLowerCase();
+    const path = window.location.pathname.toLowerCase();
+    const bodyText = (document.body.innerText || "").toLowerCase();
+
+    if (path.includes('/jobs') ||
+        path.includes('/job') ||
+        bodyText.includes('jobs (') ||
+        bodyText.includes('start working') ||
+        document.querySelector('button[data-test-id*="start-working"]') ||
+        document.querySelector('.awsui-table')) {
+      return true;
     }
 
-    #sm-home-floating-icon:active {
-      transform: translateY(-1px) scale(0.99);
+    return false;
+  }
+
+  function isTaskPage() {
+    if (isJobsListPage()) {
+      return false;
     }
 
-    .floating-header {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-bottom: 8px;
-      color: white;
+    const url = window.location.href.toLowerCase();
+    const path = window.location.pathname.toLowerCase();
+
+    if (url.includes('/task') || url.includes('/labeling')) {
+      const awsTimer = parseAWSTimer();
+      if (awsTimer) return true;
     }
 
-    .floating-icon {
-      font-size: 20px;
-      filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.2));
+    const awsTimer = parseAWSTimer();
+    if (awsTimer) return true;
+
+    const bodyText = (document.body.innerText || "").toLowerCase();
+    if (bodyText.includes("task time") && bodyText.includes("task description")) {
+      return true;
     }
 
-    .floating-title {
-      font-size: 11px;
-      font-weight: 700;
-      color: rgba(255, 255, 255, 0.95);
-      letter-spacing: 0.3px;
-    }
+    return false;
+  }
 
-    .floating-stats {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-    }
+  // ============================================================================
+  // 🏠 HOME PAGE STATS DISPLAY - COMPACT SIZE (NO AI MENTION)
+  // ============================================================================
+  const homeDisplay = document.createElement("div");
+  homeDisplay.id = "sm-home-stats";
+  homeDisplay.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 999999;
+    display: block;
+    font-family: 'Inter', system-ui, sans-serif;
+    user-select: none;
+  `;
 
-    .stat-box {
-      background: rgba(255, 255, 255, 0.15);
-      backdrop-filter: blur(10px);
-      border-radius: 8px;
-      padding: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      transition: all 0.2s;
-    }
-
-    .stat-box:hover {
-      background: rgba(255, 255, 255, 0.25);
-      transform: translateY(-1px);
-    }
-
-    .stat-label {
-      font-size: 9px;
-      color: rgba(255, 255, 255, 0.8);
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-      margin-bottom: 3px;
-    }
-
-    .stat-value {
-      font-size: 16px;
-      font-weight: 900;
-      color: white;
-      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-      font-family: 'Courier New', monospace;
-      line-height: 1;
-    }
-
-    .floating-footer {
-      margin-top: 8px;
-      text-align: center;
-      font-size: 9px;
-      color: rgba(255, 255, 255, 0.7);
-      font-weight: 600;
-    }
-
-    .pulse-indicator {
-      display: inline-block;
-      width: 6px;
-      height: 6px;
-      background: #10b981;
-      border-radius: 50%;
-      margin-right: 4px;
-      animation: pulse 2s infinite;
-      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
-    }
-
-    @keyframes pulse {
-      0% {
-        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
-      }
-      50% {
-        box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
-      }
-      100% {
-        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
-      }
-    }
-
-    @media (max-width: 768px) {
-      #sm-home-floating-icon {
-        min-width: 140px;
-        padding: 10px 12px;
-        bottom: 16px;
-        left: 16px;
+  homeDisplay.innerHTML = `
+    <style>
+      @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-8px); }
       }
 
-      .floating-title {
-        font-size: 10px;
+      @keyframes glow {
+        0%, 100% { box-shadow: 0 0 15px rgba(99, 102, 241, 0.3), 0 0 30px rgba(59, 130, 246, 0.2); }
+        50% { box-shadow: 0 0 25px rgba(99, 102, 241, 0.5), 0 0 50px rgba(59, 130, 246, 0.3); }
       }
 
-      .stat-value {
+      .home-stats-container {
+        background: linear-gradient(135deg, rgba(30, 27, 75, 0.98) 0%, rgba(49, 46, 129, 0.98) 100%);
+        backdrop-filter: blur(20px);
+        border-radius: 16px;
+        padding: 16px;
+        width: 200px;
+        box-shadow: 0 15px 40px rgba(0, 0, 0, 0.4);
+        border: 1.5px solid rgba(99, 102, 241, 0.3);
+        animation: float 3s ease-in-out infinite, glow 2s ease-in-out infinite;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .home-stats-container:hover {
+        transform: translateY(-4px) scale(1.03);
+        border-color: rgba(99, 102, 241, 0.6);
+        box-shadow: 0 20px 50px rgba(99, 102, 241, 0.4);
+      }
+
+      .home-stats-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        padding-bottom: 10px;
+        border-bottom: 1.5px solid rgba(99, 102, 241, 0.3);
+      }
+
+      .home-stats-title {
+        font-size: 14px;
+        font-weight: 900;
+        background: linear-gradient(135deg, #a78bfa, #c4b5fd);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        letter-spacing: 0.5px;
+      }
+
+      .home-stats-badge {
+        padding: 3px 8px;
+        background: linear-gradient(135deg, #10b981, #059669);
+        color: white;
+        border-radius: 10px;
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        animation: pulse 2s infinite;
+      }
+
+      .home-stat-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .home-stat-row:last-child {
+        margin-bottom: 0;
+      }
+
+      .home-stat-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: #c4b5fd;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .home-stat-icon {
         font-size: 14px;
       }
 
-      .stat-label {
-        font-size: 8px;
+      .home-stat-value {
+        font-size: 16px;
+        font-weight: 900;
+        color: #ffffff;
+        font-family: 'Courier New', monospace;
+                text-shadow: 0 2px 8px rgba(99, 102, 241, 0.5);
       }
-    }
-  </style>
-  <div class="floating-header">
-    <div class="floating-icon">🤖</div>
-    <div class="floating-title">SAGEMAKER STATS</div>
-  </div>
-  <div class="floating-stats">
-    <div class="stat-box">
-      <div class="stat-label">⏱️ Time</div>
-      <div class="stat-value" id="home-time-display">00:00:00</div>
+
+      .home-stat-progress {
+        width: 100%;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        overflow: hidden;
+        margin-top: 8px;
+      }
+
+      .home-stat-progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #10b981, #3b82f6, #8b5cf6);
+        border-radius: 10px;
+        transition: width 0.5s ease;
+        box-shadow: 0 0 8px rgba(99, 102, 241, 0.6);
+      }
+
+      .home-stats-footer {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid rgba(99, 102, 241, 0.2);
+        text-align: center;
+        font-size: 9px;
+        color: #a78bfa;
+        font-weight: 600;
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.85; transform: scale(1.05); }
+      }
+    </style>
+
+    <div class="home-stats-container">
+      <div class="home-stats-header">
+        <div class="home-stats-title">📊 TRACKER</div>
+        <div class="home-stats-badge">LIVE</div>
+      </div>
+
+      <div class="home-stat-row">
+        <div class="home-stat-label">
+          <span class="home-stat-icon">⏱️</span>
+          <span>Time</span>
+        </div>
+        <div class="home-stat-value" id="home-timer-value">00:00:00</div>
+      </div>
+
+      <div class="home-stat-row">
+        <div class="home-stat-label">
+          <span class="home-stat-icon">📋</span>
+          <span>Tasks</span>
+        </div>
+        <div class="home-stat-value" id="home-count-value">0</div>
+      </div>
+
+      <div class="home-stat-row">
+        <div class="home-stat-label">
+          <span class="home-stat-icon">🎯</span>
+          <span>Goal</span>
+        </div>
+        <div class="home-stat-value" id="home-goal-value" style="font-size: 14px; color: #10b981;">0%</div>
+      </div>
+
+      <div class="home-stat-progress">
+        <div class="home-stat-progress-fill" id="home-goal-progress" style="width: 0%"></div>
+      </div>
+
+      <div class="home-stats-footer">
+        Click to open Dashboard
+      </div>
     </div>
-    <div class="stat-box">
-      <div class="stat-label">📊 Tasks</div>
-      <div class="stat-value" id="home-count-display">0</div>
-    </div>
-  </div>
-  <div class="floating-footer">
-    <span class="pulse-indicator"></span>Click for details
-  </div>
-`;
+  `;
 
-  document.body.appendChild(homeFloatingIcon);
+  document.body.appendChild(homeDisplay);
+  homeDisplay.addEventListener('click', showDashboard);
 
-  homeFloatingIcon.addEventListener('click', () => {
-    showUltraPremiumDashboard();
-  });
+  function updateHomeDisplay() {
+    const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+    const count = retrieve(KEYS.COUNT, 0) || 0;
 
-  function updateHomeFloatingIcon() {
-  try {
-    const isHome = isHomePage();
-    const isTask = isTaskPage();
+    const timerEl = document.getElementById('home-timer-value');
+    const countEl = document.getElementById('home-count-value');
+    const goalEl = document.getElementById('home-goal-value');
+    const goalProgress = document.getElementById('home-goal-progress');
 
-    if (isHome && !isTask) {
-      homeFloatingIcon.style.display = 'block';
+    if (timerEl) timerEl.textContent = fmt(committed);
+    if (countEl) countEl.textContent = count;
 
-      const count = retrieve(KEYS.COUNT, 0) || 0;
-      const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
-
-      const timeDisplay = document.getElementById('home-time-display');
-      const countDisplay = document.getElementById('home-count-display');
-
-      if (timeDisplay) {
-        timeDisplay.textContent = fmt(committed);
-      }
-      if (countDisplay) {
-        countDisplay.textContent = count;
-      }
-
-      log('✓ Home icon updated - Time:', fmt(committed), 'Count:', count);
-    } else {
-      homeFloatingIcon.style.display = 'none';
+    if (goalEl && goalProgress) {
+      const targetSeconds = CONFIG.DAILY_ALERT_HOURS * 3600;
+      const percent = Math.min(100, Math.round((committed / targetSeconds) * 100));
+      goalEl.textContent = `${percent}%`;
+      goalProgress.style.width = `${percent}%`;
     }
-  } catch (e) {
-    log('updateHomeFloatingIcon error:', e);
   }
-}
-  // ---------------------------------------------------------------------------
-  // Tracking loop + UI (Task Page)
-  // ---------------------------------------------------------------------------
-  let lastAWSData = null;
-  let lastDisplayedTotal = -1;
 
-  const display = document.createElement('div');
-  display.id = 'sm-utilization';
-  Object.assign(display.style, {
-    position: 'absolute',
-    left: '12px',
-    top: '50%',
-    transform: 'translateY(-50%)',
-    color: 'inherit',
-    fontSize: 'inherit',
-    fontFamily: 'inherit',
-    opacity: '0.92',
-    pointerEvents: 'auto',
-    userSelect: 'none',
-    whiteSpace: 'nowrap',
-    display: 'none',
-    alignItems: 'center',
-    gap: '0px',
-    zIndex: '9999'
-  });
+  // ============================================================================
+  // 🎨 DISPLAY UI - Task Page (NO AI MENTION)
+  // ============================================================================
+  const display = document.createElement("div");
+  display.id = "sm-utilization";
+  display.style.cssText = `
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: inherit;
+    fontSize: inherit;
+    font-family: inherit;
+    opacity: 0.92;
+    pointer-events: auto;
+    user-select: none;
+    white-space: nowrap;
+    display: none;
+    align-items: center;
+    gap: 0px;
+    z-index: 9999;
+  `;
 
-  const timerContainer = document.createElement('div');
-  timerContainer.style.cssText = 'display: inline-block; position: relative;';
-  const timerTextSpan = document.createElement('span');
-  timerTextSpan.id = 'sm-timer-text';
-  timerTextSpan.textContent = 'Utilization: 00:00:00';
+  const timerContainer = document.createElement("div");
+  timerContainer.style.cssText = "display: inline-block; position: relative;";
+
+  const timerTextSpan = document.createElement("span");
+  timerTextSpan.id = "sm-timer-text";
+  timerTextSpan.textContent = "Utilization: 00:00:00";
   timerContainer.appendChild(timerTextSpan);
 
-  const progressContainer = document.createElement('div');
-  progressContainer.style.cssText = 'position: absolute; top: 100%; left: 0; right: 0; margin-top: 1px; height: 4px; background: rgba(0,0,0,0.15); border-radius: 2px; overflow: hidden;';
-  const progressBar = document.createElement('div');
-  progressBar.id = 'sm-progress-bar';
-  progressBar.style.cssText = 'height: 100%; background: linear-gradient(90deg, #10b981, #3b82f6, #8b5cf6); width: 0%; transition: width 0.5s ease, background 0.3s ease; box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);';
+  const progressContainer = document.createElement("div");
+  progressContainer.style.cssText = `
+    position: absolute; top: 100%; left: 0; right: 0; margin-top: 2px;
+    height: 4px; background: rgba(0,0,0,0.15);
+    border-radius: 2px; overflow: hidden;
+  `;
+
+  const progressBar = document.createElement("div");
+  progressBar.id = "sm-progress-bar";
+  progressBar.style.cssText = `
+    height: 100%;
+    background: linear-gradient(90deg, #10b981, #3b82f6, #8b5cf6);
+    width: 0%;
+    transition: width 0.5s ease;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+  `;
   progressContainer.appendChild(progressBar);
   timerContainer.appendChild(progressContainer);
+
   display.appendChild(timerContainer);
 
-  const countLabel = document.createElement('span');
-  countLabel.id = 'sm-count-label';
-  countLabel.textContent = ' | Count: 0';
-  countLabel.style.marginLeft = '8px';
+  const countLabel = document.createElement("span");
+  countLabel.id = "sm-count-label";
+  countLabel.textContent = " | Count: 0";
+  countLabel.style.marginLeft = "8px";
   display.appendChild(countLabel);
 
-  let footerObserver = null;
-  let buttonsObserver = null;
-  let attachFooterTimeout = null;
-  let wireButtonsTimeout = null;
+  // ============================================================================
+  // 🎨 DISPLAY VISIBILITY
+  // ============================================================================
+  function updateDisplayVisibility() {
+    const isHome = isHomePage();
+    const isJobsList = isJobsListPage();
+    const isTask = isTaskPage();
 
-  function cleanupObservers() {
-    try {
-      if (footerObserver) {
-        footerObserver.disconnect();
-        footerObserver = null;
-      }
-      if (buttonsObserver) {
-        buttonsObserver.disconnect();
-        buttonsObserver = null;
-      }
-      if (attachFooterTimeout) {
-        clearTimeout(attachFooterTimeout);
-        attachFooterTimeout = null;
-      }
-      if (wireButtonsTimeout) {
-        clearTimeout(wireButtonsTimeout);
-        wireButtonsTimeout = null;
-      }
-      log('✓ Observers cleaned up');
-    } catch (e) {
-      log('Cleanup error:', e);
+    log(`Page detection - Home: ${isHome}, JobsList: ${isJobsList}, Task: ${isTask}`);
+
+    if (isTask) {
+      display.style.display = "flex";
+      homeDisplay.style.display = "none";
+      log("✅ Showing task page timer");
+    } else {
+      display.style.display = "none";
+      homeDisplay.style.display = "block";
+      log("✅ Showing home page stats");
     }
   }
 
-    function attachToFooter() {
+  let footerObserver = null;
+
+  function attachToFooter() {
     if (!isTaskPage()) return;
-    const footer = window.__SAGEMAKER__.getFooter() || document.body;
-    window.__SAGEMAKER__.scripts.utilizationCounter = !!footer;
+
+    const footer = document.querySelector('.cswui-footer, .awsui-footer, footer') || document.body;
     if (!footer) return;
-    if (getComputedStyle(footer).position === 'static') footer.style.position = 'relative';
+    if (getComputedStyle(footer).position === "static") {
+      footer.style.position = "relative";
+    }
+
     if (!footer.contains(display)) footer.appendChild(display);
-    if (!display.querySelector('#sm-log-btn')) {
-      const btn = document.createElement('button');
-      btn.id = 'sm-log-btn';
-      btn.innerHTML = '🤖';
-      btn.title = 'Open Dashboard (Ctrl+Shift+U)';
-      Object.assign(btn.style, {
-        marginLeft: '8px',
-        padding: '6px 12px',
-        borderRadius: '6px',
-        background: 'linear-gradient(135deg, #8b5cf6, #6366f1)',
-        color: '#fff',
-        border: 'none',
-        cursor: 'pointer',
-        fontSize: '16px',
-        fontWeight: '600',
-        transition: 'all 0.2s'
+
+    if (!display.querySelector("#sm-dashboard-btn")) {
+      const btn = document.createElement("button");
+      btn.id = "sm-dashboard-btn";
+      btn.innerHTML = "📊 Dashboard";
+      btn.title = "Open Dashboard (Ctrl+Shift+U)";
+      btn.style.cssText = `
+        margin-left: 8px;
+        padding: 6px 12px;
+        border-radius: 6px;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        color: #fff;
+        border: none;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 600;
+        transition: all 0.2s;
+        box-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
+      `;
+      btn.addEventListener("mouseenter", () => {
+        btn.style.transform = "translateY(-2px)";
+        btn.style.boxShadow = "0 4px 8px rgba(99, 102, 241, 0.4)";
       });
-      btn.addEventListener('mouseenter', () => {
-        btn.style.transform = 'translateY(-2px)';
-        btn.style.boxShadow = '0 4px 8px rgba(139, 92, 246, 0.4)';
+      btn.addEventListener("mouseleave", () => {
+        btn.style.transform = "translateY(0)";
+        btn.style.boxShadow = "0 2px 4px rgba(99, 102, 241, 0.3)";
       });
-      btn.addEventListener('mouseleave', () => {
-        btn.style.transform = 'translateY(0)';
-        btn.style.boxShadow = 'none';
-      });
-      btn.addEventListener('click', showUltraPremiumDashboard);
+      btn.addEventListener("click", showDashboard);
       display.appendChild(btn);
     }
   }
 
   footerObserver = new MutationObserver(() => {
-    if (attachFooterTimeout) return;
-    attachFooterTimeout = setTimeout(() => {
-      try {
-        attachToFooter();
-      } catch (e) {
-        log('attachToFooter error:', e);
-      } finally {
-        attachFooterTimeout = null;
-      }
-    }, CONFIG.MUTATION_OBSERVER_THROTTLE);
+    setTimeout(attachToFooter, 120);
   });
   footerObserver.observe(document.body, { childList: true, subtree: true });
 
+  // ============================================================================
+  // 🎯 DISPLAY UPDATE
+  // ============================================================================
   function updateDisplay() {
-    try {
-      const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
-      let pending = 0;
-      if (activeTask && (activeTask.status === 'active' || activeTask.status === 'paused')) {
-        pending = activeTask.awsCurrent || 0;
-      }
-      const total = committed + pending;
+    const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
+    let pending = 0;
 
-      if (total !== lastDisplayedTotal) {
-        const timerText = document.getElementById('sm-timer-text');
-        if (timerText) timerText.textContent = `Utilization: ${fmt(total)}`;
-        lastDisplayedTotal = total;
-      }
-
-      const countLabelEl = document.getElementById('sm-count-label');
-      if (countLabelEl) {
-        const currentCount = retrieve(KEYS.COUNT, 0) || 0;
-        countLabelEl.textContent = ` | Count: ${currentCount}`;
-      }
-
-      const bar = document.getElementById('sm-progress-bar');
-      if (bar) {
-        const targetSeconds = CONFIG.DAILY_ALERT_HOURS * 3600;
-        const percent = Math.min(100, (total / targetSeconds) * 100);
-        bar.style.width = `${percent}%`;
-
-        if (percent < 50) {
-          bar.style.background = 'linear-gradient(90deg, #10b981, #34d399)';
-        } else if (percent < 80) {
-          bar.style.background = 'linear-gradient(90deg, #f59e0b, #fbbf24)';
-        } else {
-          bar.style.background = 'linear-gradient(90deg, #ef4444, #f87171)';
-        }
-      }
-
-      updateHomeFloatingIcon();
-    } catch (e) {
-      log('updateDisplay error:', e);
+    if (activeTask && (activeTask.status === "active" || activeTask.status === "paused")) {
+      pending = activeTask.awsCurrent || 0;
     }
+
+    const total = committed + pending;
+
+    const timerText = document.getElementById('sm-timer-text');
+    if (timerText) {
+      timerText.textContent = `Utilization: ${fmt(total)}`;
+    }
+
+    const countLabelEl = document.getElementById('sm-count-label');
+    if (countLabelEl) {
+      countLabelEl.textContent = ` | Count: ${retrieve(KEYS.COUNT, 0) || 0}`;
+    }
+
+    const bar = document.getElementById('sm-progress-bar');
+    if (bar) {
+      const targetSeconds = CONFIG.DAILY_ALERT_HOURS * 3600;
+      const percent = Math.min(100, (total / targetSeconds) * 100);
+      bar.style.width = `${percent}%`;
+    }
+
+    updateHomeDisplay();
   }
 
-  function wireTaskActionButtons() {
-    try {
-      const btns = document.querySelectorAll('button, [role="button"]');
-      btns.forEach((el) => {
-        try {
-          if (el.getAttribute('data-sm-id')) return;
-
-          const raw = (el.innerText || '').toLowerCase();
-          if (!raw) return;
-
-          const btnId = `btn_${Date.now()}_${Math.random()}`;
-          el.setAttribute('data-sm-id', btnId);
-
-          if (raw.includes('submit') || raw.includes('complete')) {
-            const submitHandler = () => {
-              setTimeout(() => {
-                log('🖱️ Submit button clicked');
-                commitActiveTask();
-                updateDisplay();
-              }, 100);
-            };
-            el.addEventListener('click', submitHandler);
-          }
-
-          if (raw.includes('skip')) {
-            const skipHandler = () => {
-              log('🖱️ Skip button clicked');
-              discardActiveTask('skipped');
-              updateDisplay();
-            };
-            el.addEventListener('click', skipHandler);
-          }
-        } catch (e) {}
-      });
-    } catch (e) {
-      log('wireTaskActionButtons error:', e);
-    }
-  }
-
-  buttonsObserver = new MutationObserver(() => {
-    if (wireButtonsTimeout) return;
-    wireButtonsTimeout = setTimeout(() => {
-      try {
-        wireTaskActionButtons();
-      } catch (e) {
-        log('wireTaskActionButtons error:', e);
-      } finally {
-        wireButtonsTimeout = null;
-      }
-    }, 500);
-  });
-  buttonsObserver.observe(document.body, { childList: true, subtree: true });
-
-  window.addEventListener('beforeunload', () => {
-    cleanupObservers();
-  });
-
-  // ---------------------------------------------------------------------------
-  // Dashboard
-  // ---------------------------------------------------------------------------
+  // ============================================================================
+  // 📊 DASHBOARD FUNCTIONS
+  // ============================================================================
   function aggregateTodayTaskData() {
     const sessions = retrieve(KEYS.SESSIONS, []) || [];
     const today = new Date().toISOString().split('T')[0];
+
     const todaySessions = sessions.filter(s => {
-      if (!validateSession(s)) return false;
-      try {
-        return new Date(s.date).toISOString().split('T')[0] === today;
-      } catch (e) {
-        return false;
-      }
+      const sessionDate = new Date(s.date).toISOString().split('T')[0];
+      return sessionDate === today;
     });
 
     const taskMap = new Map();
+
     todaySessions.forEach(session => {
-      const taskName = session.taskName || 'Unknown Task';
+      const taskName = session.taskName || "Unknown Task";
+
       if (!taskMap.has(taskName)) {
         taskMap.set(taskName, {
-          taskName,
+          taskName: taskName,
           totalTime: 0,
           totalSessions: 0,
           submitted: 0,
@@ -1518,12 +2347,19 @@ homeFloatingIcon.innerHTML = `
           lastWorked: null
         });
       }
+
       const task = taskMap.get(taskName);
-      if (session.action === 'submitted') task.totalTime += (session.duration || 0);
+
+      if (session.action === 'submitted' || session.action.includes('manual_reset')) {
+        task.totalTime += (session.duration || 0);
+        task.submitted++;
+      } else if (session.action === 'skipped') {
+        task.skipped++;
+      } else if (session.action === 'expired') {
+        task.expired++;
+      }
+
       task.totalSessions++;
-      if (session.action === 'submitted') task.submitted++;
-      else if (session.action === 'skipped') task.skipped++;
-      else if (session.action === 'expired') task.expired++;
 
       const sessionDate = new Date(session.date);
       if (!task.lastWorked || sessionDate > new Date(task.lastWorked)) {
@@ -1534,21 +2370,9 @@ homeFloatingIcon.innerHTML = `
     return Array.from(taskMap.values()).map(task => ({
       ...task,
       avgTime: task.submitted > 0 ? Math.round(task.totalTime / task.submitted) : 0,
-      successRate: task.totalSessions > 0 ? Math.round((task.submitted / task.totalSessions) * 100) : 0
+      successRate: task.totalSessions > 0 ?
+        Math.round((task.submitted / task.totalSessions) * 100) : 0
     }));
-  }
-
-  function getTodaySessions() {
-    const sessions = retrieve(KEYS.SESSIONS, []) || [];
-    const today = new Date().toISOString().split('T')[0];
-    return sessions.filter(s => {
-      if (!validateSession(s)) return false;
-      try {
-        return new Date(s.date).toISOString().split('T')[0] === today;
-      } catch (e) {
-        return false;
-      }
-    });
   }
 
   function getLast7DaysData() {
@@ -1560,15 +2384,14 @@ homeFloatingIcon.innerHTML = `
       const d = new Date();
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
+
       const time = history[dateStr] || 0;
+
       const daySessions = sessions.filter(s => {
-        if (!validateSession(s)) return false;
-        try {
-          return new Date(s.date).toISOString().split('T')[0] === dateStr && s.action === 'submitted';
-        } catch (e) {
-          return false;
-        }
+        const sessionDate = new Date(s.date).toISOString().split('T')[0];
+        return sessionDate === dateStr && (s.action === 'submitted' || s.action.includes('manual_reset'));
       });
+
       last7Days.push({
         date: dateStr,
         dayName: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
@@ -1576,414 +2399,855 @@ homeFloatingIcon.innerHTML = `
         count: daySessions.length
       });
     }
+
     return last7Days;
   }
 
-  window.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.shiftKey) {
-      switch (e.key.toLowerCase()) {
-        case 'u': e.preventDefault(); showUltraPremiumDashboard(); break;
-        case 'r': e.preventDefault(); showResetDialog(); break;
-        case 'd': e.preventDefault(); runDiagnostics(); break;
-      }
+  function dashboardExportJSON() {
+    const aiStatus = AI.getStatus();
+
+    const payload = {
+      version: "5.0.0-ULTIMATE",
+      exported_at: new Date().toISOString(),
+      history: retrieve(KEYS.HISTORY, {}),
+      sessions: retrieve(KEYS.SESSIONS, []),
+      analytics: retrieve(KEYS.ANALYTICS, {}),
+      daily_committed: retrieve(KEYS.DAILY_COMMITTED, 0),
+      count: retrieve(KEYS.COUNT, 0),
+      last_date: retrieve(KEYS.LAST_DATE),
+      queue_summary: aggregateTodayTaskData(),
+      system_status: aiStatus,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `sagemaker-data-${todayStr()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    log('✅ Data exported successfully!');
+  }
+
+  function dashboardExportCSV() {
+    const sessions = retrieve(KEYS.SESSIONS, []) || [];
+
+    if (sessions.length === 0) {
+      log('No data to export');
+      return;
     }
-  });
 
-  let currentSessionPage = 1;
-  const SESSIONS_PER_PAGE = 10;
+    const headers = ['Date', 'Time', 'Task Name', 'Duration (seconds)', 'Duration (formatted)', 'Action'];
 
-  function showUltraPremiumDashboard() {
-    const existing = document.getElementById('sm-ultra-dashboard');
-    if (existing) { existing.remove(); return; }
+    const rows = sessions.map(s => {
+      const date = new Date(s.date);
+      return [
+        date.toLocaleDateString(),
+        date.toLocaleTimeString(),
+        (s.taskName || 'Unknown').replace(/,/g, ';'),
+        s.duration || 0,
+        fmt(s.duration || 0),
+        s.action || 'unknown'
+      ];
+    });
 
-    const root = document.createElement('div');
-    root.id = 'sm-ultra-dashboard';
+    const csv = [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sagemaker-sessions-${todayStr()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    log('✅ CSV exported successfully');
+  }
+
+  function dashboardImportJSON() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+
+    input.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = JSON.parse(event.target.result);
+
+          if (!data.version || !data.sessions) {
+            throw new Error('Invalid backup file format');
+          }
+
+          const shouldMerge = confirm('Merge with existing data?\n\nOK = Merge\nCancel = Replace all data');
+
+          if (shouldMerge) {
+            const existingSessions = retrieve(KEYS.SESSIONS, []);
+            const existingHistory = retrieve(KEYS.HISTORY, {});
+
+            store(KEYS.SESSIONS, [...existingSessions, ...data.sessions]);
+            store(KEYS.HISTORY, { ...existingHistory, ...data.history });
+
+            if (data.analytics) {
+              const existingAnalytics = retrieve(KEYS.ANALYTICS, {});
+              store(KEYS.ANALYTICS, { ...existingAnalytics, ...data.analytics });
+            }
+          } else {
+            store(KEYS.HISTORY, data.history || {});
+            store(KEYS.SESSIONS, data.sessions || []);
+            store(KEYS.ANALYTICS, data.analytics || {});
+
+            if (data.daily_committed) store(KEYS.DAILY_COMMITTED, data.daily_committed);
+            if (data.count) store(KEYS.COUNT, data.count);
+          }
+
+          log('✅ Import successful!');
+
+          if (CONFIG.AI_ENABLED) {
+            setTimeout(() => AI.run(), 1000);
+          }
+
+          if (document.getElementById('sm-dashboard')) {
+            showDashboard();
+          }
+        } catch (err) {
+          console.error('❌ Import failed:', err.message);
+        }
+      };
+
+      reader.readAsText(file);
+    };
+
+    input.click();
+  }
+
+  // ============================================================================
+  // 📊 PROFESSIONAL DASHBOARD - CLEAN & COMPACT
+  // ============================================================================
+  function showDashboard() {
+    const existing = document.getElementById('sm-dashboard');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+
     const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
     const count = retrieve(KEYS.COUNT, 0) || 0;
     const todayTasks = aggregateTodayTaskData();
-    const todaySessions = getTodaySessions();
     const last7Days = getLast7DaysData();
-    const updateInfo = retrieve(KEYS.UPDATE_AVAILABLE);
-    const lastCheck = retrieve(KEYS.LAST_UPDATE_CHECK);
+    const analytics = retrieve(KEYS.ANALYTICS, {});
 
+    const targetSeconds = CONFIG.DAILY_ALERT_HOURS * 3600;
+    const goalPercent = Math.min(100, Math.round((committed / targetSeconds) * 100));
+
+    const root = document.createElement('div');
+    root.id = 'sm-dashboard';
     root.innerHTML = `
       <style>
-        #sm-ultra-dashboard{position:fixed;inset:0;z-index:999999;font-family:system-ui,-apple-system,sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);overflow-y:auto}
-        .dashboard-container{max-width:1600px;margin:20px auto;padding:20px;background:rgba(255,255,255,0.95);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.3)}
-        .dashboard-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:16px;border-bottom:2px solid #e5e7eb}
-        .dashboard-title{font-size:24px;font-weight:800;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-        .update-badge{background:linear-gradient(135deg,#10b981,#059669);color:white;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:700;animation:pulse 2s infinite;margin-left:12px}
-        .btn{padding:8px 16px;border-radius:8px;border:none;cursor:pointer;font-weight:600;transition:all 0.2s;font-size:14px}
-        .btn:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,0.15)}
-        .btn-primary{background:linear-gradient(135deg,#8b5cf6,#6366f1);color:white}
-        .btn-success{background:linear-gradient(135deg,#10b981,#059669);color:white}
-        .btn-danger{background:#ef4444;color:white}
-        .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px}
-        .stat-card{padding:16px;background:white;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.08);transition:transform 0.2s}
-        .stat-card:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,0.12)}
-        .stat-label{font-size:13px;color:#6b7280;font-weight:500;margin-bottom:4px}
-        .stat-value{font-size:28px;font-weight:900;color:#1f2937}
-        .stat-subtitle{font-size:12px;color:#9ca3af;margin-top:4px}
-        .content-grid{display:grid;grid-template-columns:2fr 1fr;gap:16px}
-        .card{background:white;padding:16px;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,0.08)}
-        .card-title{font-weight:700;font-size:16px;margin-bottom:12px;color:#1f2937}
-        table{width:100%;border-collapse:collapse;font-size:14px}
-        thead{background:#f9fafb;border-bottom:2px solid #e5e7eb}
-        th{padding:10px 8px;text-align:left;font-weight:600;color:#4b5563;font-size:13px}
-        td{padding:10px 8px;border-bottom:1px solid #f3f4f6;color:#374151}
-        tbody tr:hover{background:#f9fafb}
-        .empty-state{padding:40px 20px;text-align:center;color:#9ca3af;font-size:14px}
-        .day-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px}
-        .day-name{color:#6b7280;font-weight:500}
-        .day-time{font-weight:700;color:#1f2937}
-        .week-total{font-weight:700;padding-top:12px;margin-top:8px;border-top:2px solid #e5e7eb;font-size:15px;color:#1f2937}
-        .pagination{margin-top:12px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
-        .pagination button{padding:6px 12px;border:1px solid #e5e7eb;background:white;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600}
-        .pagination button:hover{background:#f3f4f6}
-        .pagination button:disabled{background:#8b5cf6;color:white;cursor:default}
-        @media(max-width:1024px){.content-grid{grid-template-columns:1fr}}
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+        #sm-dashboard {
+          position: fixed;
+          inset: 0;
+          z-index: 999999;
+          font-family: 'Inter', system-ui, sans-serif;
+          background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+          overflow-y: auto;
+          color: #e2e8f0;
+        }
+
+        .dashboard-container {
+          max-width: 1400px;
+          margin: 0 auto;
+          padding: 24px;
+        }
+
+        /* ===== HEADER ===== */
+        .dashboard-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 20px 28px;
+          background: rgba(30, 41, 59, 0.6);
+          backdrop-filter: blur(20px);
+          border: 1px solid rgba(148, 163, 184, 0.1);
+          border-radius: 16px;
+          margin-bottom: 24px;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .dashboard-title {
+          font-size: 28px;
+          font-weight: 900;
+          color: #f1f5f9;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .version-badge {
+          padding: 6px 14px;
+          background: linear-gradient(135deg, #10b981, #059669);
+          color: white;
+          border-radius: 20px;
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+
+        .header-actions {
+          display: flex;
+          gap: 10px;
+        }
+
+        .btn {
+          padding: 10px 18px;
+          border-radius: 10px;
+          border: none;
+          cursor: pointer;
+          font-weight: 600;
+          font-size: 13px;
+          transition: all 0.2s;
+          font-family: 'Inter', sans-serif;
+        }
+
+        .btn-primary {
+          background: linear-gradient(135deg, #3b82f6, #2563eb);
+          color: white;
+        }
+
+        .btn-primary:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+        }
+
+        .btn-close {
+          background: #ef4444;
+          color: white;
+        }
+
+        .btn-close:hover {
+          background: #dc2626;
+          transform: translateY(-2px);
+        }
+
+        /* ===== MAIN STATS GRID ===== */
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 20px;
+          margin-bottom: 24px;
+        }
+
+        .stat-card {
+          background: rgba(30, 41, 59, 0.6);
+          backdrop-filter: blur(20px);
+          border: 1px solid rgba(148, 163, 184, 0.1);
+          border-radius: 16px;
+          padding: 24px;
+          transition: all 0.3s;
+        }
+
+        .stat-card:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 8px 24px rgba(59, 130, 246, 0.2);
+          border-color: rgba(59, 130, 246, 0.3);
+        }
+
+        .stat-label {
+          font-size: 13px;
+          color: #94a3b8;
+          text-transform: uppercase;
+          font-weight: 700;
+          margin-bottom: 12px;
+          letter-spacing: 1px;
+        }
+
+        .stat-value {
+          font-size: 42px;
+          font-weight: 900;
+          color: #f1f5f9;
+          font-family: 'Courier New', monospace;
+          text-shadow: 0 2px 10px rgba(59, 130, 246, 0.3);
+          line-height: 1;
+        }
+
+        .stat-meta {
+          font-size: 13px;
+          color: #64748b;
+          margin-top: 8px;
+          font-weight: 600;
+        }
+
+        /* ===== CONTENT SECTIONS ===== */
+        .content-grid {
+          display: grid;
+          grid-template-columns: repeat(12, 1fr);
+          gap: 20px;
+          margin-bottom: 24px;
+        }
+
+        .section-card {
+          background: rgba(30, 41, 59, 0.6);
+          backdrop-filter: blur(20px);
+          border: 1px solid rgba(148, 163, 184, 0.1);
+          border-radius: 16px;
+          padding: 24px;
+          overflow: hidden;
+        }
+
+        .section-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 20px;
+          padding-bottom: 16px;
+          border-bottom: 2px solid rgba(148, 163, 184, 0.1);
+        }
+
+        .section-title {
+          font-size: 18px;
+          font-weight: 800;
+          color: #f1f5f9;
+        }
+
+        .section-badge {
+          padding: 6px 12px;
+          background: rgba(59, 130, 246, 0.2);
+          color: #60a5fa;
+          border-radius: 10px;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        /* ===== GOAL SECTION ===== */
+        .goal-section {
+          grid-column: 1 / 7;
+        }
+
+        .goal-display {
+          display: flex;
+          justify-content: space-around;
+          margin-bottom: 20px;
+        }
+
+        .goal-item {
+          text-align: center;
+        }
+
+        .goal-item-label {
+          font-size: 12px;
+          color: #94a3b8;
+          text-transform: uppercase;
+          margin-bottom: 8px;
+          font-weight: 700;
+        }
+
+        .goal-item-value {
+          font-size: 32px;
+          font-weight: 900;
+          color: #f1f5f9;
+          font-family: 'Courier New', monospace;
+        }
+
+        .progress-container {
+          width: 100%;
+          height: 40px;
+          background: rgba(15, 23, 42, 0.6);
+          border-radius: 20px;
+          overflow: hidden;
+          position: relative;
+          margin: 20px 0;
+        }
+
+        .progress-fill {
+          height: 100%;
+          background: linear-gradient(90deg, #10b981, #3b82f6, #8b5cf6);
+          transition: width 0.5s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: white;
+          font-weight: 800;
+          font-size: 16px;
+          box-shadow: 0 0 20px rgba(59, 130, 246, 0.6);
+        }
+
+        .goal-success {
+          padding: 12px;
+          background: rgba(16, 185, 129, 0.2);
+          border: 1px solid rgba(16, 185, 129, 0.3);
+          border-radius: 12px;
+          text-align: center;
+          color: #10b981;
+          font-size: 14px;
+          font-weight: 700;
+        }
+
+        /* ===== WEEKLY CHART ===== */
+        .weekly-section {
+          grid-column: 7 / 13;
+        }
+
+        .chart-container {
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-around;
+          height: 180px;
+          gap: 12px;
+        }
+
+        .chart-bar-wrapper {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .chart-bar {
+          width: 100%;
+          background: linear-gradient(180deg, #3b82f6, #2563eb);
+          border-radius: 8px 8px 0 0;
+          transition: all 0.3s;
+          position: relative;
+          box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);
+        }
+
+        .chart-bar:hover {
+          background: linear-gradient(180deg, #60a5fa, #3b82f6);
+          box-shadow: 0 0 25px rgba(59, 130, 246, 0.6);
+          transform: scaleY(1.05);
+        }
+
+        .chart-label {
+          font-size: 11px;
+          color: #94a3b8;
+          font-weight: 700;
+        }
+
+        .chart-value {
+          font-size: 14px;
+          color: #f1f5f9;
+          font-weight: 800;
+        }
+
+        /* ===== TASKS TABLE ===== */
+        .tasks-section {
+          grid-column: 1 / 9;
+        }
+
+        .data-table {
+          width: 100%;
+          font-size: 13px;
+          border-collapse: collapse;
+        }
+
+        .data-table th {
+          background: rgba(15, 23, 42, 0.6);
+          color: #cbd5e1;
+          padding: 14px 12px;
+          text-align: left;
+          font-weight: 800;
+          text-transform: uppercase;
+          font-size: 11px;
+          letter-spacing: 1px;
+        }
+
+        .data-table td {
+          padding: 14px 12px;
+          color: #e2e8f0;
+          border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+        }
+
+        .data-table tr:hover {
+          background: rgba(59, 130, 246, 0.1);
+        }
+
+        .task-name-col {
+          font-weight: 700;
+          max-width: 300px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: #f1f5f9;
+        }
+
+        .badge {
+          padding: 4px 10px;
+          border-radius: 6px;
+          font-size: 11px;
+          font-weight: 800;
+          display: inline-block;
+          margin-right: 4px;
+        }
+
+        .badge-success { background: #065f46; color: #d1fae5; }
+        .badge-warning { background: #92400e; color: #fef3c7; }
+        .badge-danger { background: #991b1b; color: #fee2e2; }
+
+        /* ===== ANALYTICS ===== */
+        .analytics-section {
+          grid-column: 9 / 13;
+        }
+
+        .analytics-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 16px;
+        }
+
+        .analytics-item {
+          background: rgba(15, 23, 42, 0.6);
+          border: 1px solid rgba(148, 163, 184, 0.1);
+          border-radius: 12px;
+          padding: 18px;
+          text-align: center;
+        }
+
+        .analytics-label {
+          font-size: 11px;
+          color: #94a3b8;
+          margin-bottom: 10px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+
+        .analytics-value {
+          font-size: 32px;
+          font-weight: 900;
+          color: #f1f5f9;
+        }
+
+        .empty-state {
+          text-align: center;
+          padding: 40px;
+          color: #64748b;
+          font-size: 14px;
+        }
       </style>
+
       <div class="dashboard-container">
+        <!-- HEADER -->
         <div class="dashboard-header">
-          <div style="display:flex;align-items:center;gap:12px;">
-            <div class="dashboard-title">🤖 Sagemaker Dashboard <span style="font-size:12px;color:#6b7280">(v3.7)</span></div>
-            ${updateInfo ? `<div class="update-badge">🚀 v${sanitizeHTML(updateInfo.version)} Available</div>` : ''}
+          <div class="dashboard-title">
+            📊 Utilization Dashboard
+            <span class="version-badge">v5.0.0</span>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            ${updateInfo ? `<button id="update-now-btn" class="btn btn-success">🚀 Update Now</button>` : ''}
-            <button id="check-updates-btn" class="btn btn-primary">🔄 Check Updates</button>
-            <button id="reset-btn" class="btn btn-primary">🔄 Reset</button>
-            <button id="diagnostics-btn" class="btn btn-primary">🔍 Diagnostics</button>
-            <button id="close-dashboard" class="btn btn-danger">✕ Close</button>
+          <div class="header-actions">
+            <button class="btn btn-primary" onclick="document.getElementById('sm-dashboard').dispatchEvent(new CustomEvent('reset'))">🔄 Reset</button>
+            <button class="btn btn-primary" onclick="document.getElementById('sm-dashboard').dispatchEvent(new CustomEvent('export'))">💾 Export</button>
+            <button class="btn btn-primary" onclick="document.getElementById('sm-dashboard').dispatchEvent(new CustomEvent('import'))">📥 Import</button>
+            <button class="btn btn-close" id="close-dashboard">✕ Close</button>
           </div>
         </div>
 
+        <!-- MAIN STATS -->
         <div class="stats-grid">
           <div class="stat-card">
-            <div class="stat-label">Today's Progress</div>
-            <div class="stat-value">${sanitizeHTML(fmt(committed))}</div>
-            <div class="stat-subtitle">${count} submissions</div>
+            <div class="stat-label">⏱️ Time Today</div>
+            <div class="stat-value">${fmt(committed).substring(0, 5)}</div>
+            <div class="stat-meta">Total work time</div>
           </div>
           <div class="stat-card">
-            <div class="stat-label">Tasks Worked</div>
+            <div class="stat-label">📋 Tasks Done</div>
+            <div class="stat-value">${count}</div>
+            <div class="stat-meta">Submitted today</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">🎯 Daily Goal</div>
+            <div class="stat-value" style="font-size: 36px;">${goalPercent}%</div>
+            <div class="stat-meta">${fmt(Math.max(0, targetSeconds - committed)).substring(0, 5)} remaining</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">📊 Total Tasks</div>
             <div class="stat-value">${todayTasks.length}</div>
-            <div class="stat-subtitle">unique tasks today</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Total Sessions</div>
-            <div class="stat-value">${todaySessions.length}</div>
-            <div class="stat-subtitle">activity logs today</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Weekly Total</div>
-            <div class="stat-value">${sanitizeHTML(fmt(last7Days.reduce((s,d)=>s+d.time,0)))}</div>
-            <div class="stat-subtitle">last 7 days</div>
+            <div class="stat-meta">Unique tasks</div>
           </div>
         </div>
 
+        <!-- CONTENT GRID -->
         <div class="content-grid">
-          <div class="card">
-            <div class="card-title">📊 Today's Task Breakdown</div>
+          <!-- GOAL PROGRESS -->
+          <div class="section-card goal-section">
+            <div class="section-header">
+              <div class="section-title">🎯 Goal Progress</div>
+              <div class="section-badge">${goalPercent}%</div>
+            </div>
+            <div class="goal-display">
+              <div class="goal-item">
+                <div class="goal-item-label">Current</div>
+                <div class="goal-item-value">${fmt(committed).substring(0, 5)}</div>
+              </div>
+              <div class="goal-item">
+                <div class="goal-item-label">Target</div>
+                <div class="goal-item-value">${fmt(targetSeconds).substring(0, 5)}</div>
+              </div>
+              <div class="goal-item">
+                <div class="goal-item-label">Remaining</div>
+                <div class="goal-item-value">${fmt(Math.max(0, targetSeconds - committed)).substring(0, 5)}</div>
+              </div>
+            </div>
+            <div class="progress-container">
+              <div class="progress-fill" style="width: ${goalPercent}%">
+                ${goalPercent}%
+              </div>
+            </div>
+            ${goalPercent >= 100 ? '<div class="goal-success">🎉 Congratulations! Daily goal achieved!</div>' : ''}
+          </div>
+
+          <!-- WEEKLY CHART -->
+          <div class="section-card weekly-section">
+            <div class="section-header">
+              <div class="section-title">📅 Last 7 Days</div>
+              <div class="section-badge">${last7Days.reduce((sum, d) => sum + d.count, 0)} tasks</div>
+            </div>
+            <div class="chart-container">
+              ${last7Days.map(day => {
+                const maxTime = Math.max(...last7Days.map(d => d.time), 1);
+                const height = Math.max(15, (day.time / maxTime) * 100);
+                return `
+                  <div class="chart-bar-wrapper">
+                    <div class="chart-value">${day.count}</div>
+                    <div class="chart-bar" style="height: ${height}%" title="${fmt(day.time)}"></div>
+                    <div class="chart-label">${day.dayName.substring(0, 3)}</div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+
+          <!-- TASKS TABLE -->
+          <div class="section-card tasks-section">
+            <div class="section-header">
+              <div class="section-title">📋 Today's Tasks</div>
+              <div class="section-badge">${todayTasks.length}</div>
+            </div>
             ${todayTasks.length > 0 ? `
-              <table>
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th>Task Name</th>
-                    <th>Total Time</th>
-                    <th>Submitted</th>
-                    <th>Avg Time</th>
+                    <th>Time</th>
+                    <th>Status</th>
                     <th>Success Rate</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${todayTasks.map(t => `
+                  ${todayTasks.map(task => `
                     <tr>
-                      <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${sanitizeHTML(t.taskName)}">${sanitizeHTML(t.taskName)}</td>
-                      <td style="font-weight:600">${sanitizeHTML(fmt(t.totalTime))}</td>
-                      <td>${t.submitted}</td>
-                      <td>${sanitizeHTML(fmt(t.avgTime))}</td>
-                      <td><span style="color:${t.successRate >= 80 ? '#10b981' : t.successRate >= 50 ? '#f59e0b' : '#ef4444'};font-weight:700">${t.successRate}%</span></td>
+                      <td class="task-name-col" title="${sanitizeHTML(task.taskName)}">${sanitizeHTML(task.taskName)}</td>
+                      <td style="font-weight: 800; color: #60a5fa;">${fmt(task.totalTime).substring(0, 5)}</td>
+                      <td>
+                        <span class="badge badge-success">${task.submitted}</span>
+                        ${task.skipped > 0 ? `<span class="badge badge-warning">${task.skipped}</span>` : ''}
+                        ${task.expired > 0 ? `<span class="badge badge-danger">${task.expired}</span>` : ''}
+                      </td>
+                      <td><span class="badge ${
+                        task.successRate >= 80 ? 'badge-success' :
+                        task.successRate >= 50 ? 'badge-warning' : 'badge-danger'
+                      }">${task.successRate}%</span></td>
                     </tr>
                   `).join('')}
                 </tbody>
               </table>
-            ` : '<div class="empty-state">🎯 No tasks completed today. Start working to see your stats!</div>'}
+            ` : '<div class="empty-state">📋 No tasks completed today</div>'}
           </div>
 
-          <div class="card">
-            <div class="card-title">📅 Last 7 Days</div>
-            <div style="margin-top:8px">
-              ${last7Days.map(d => `
-                <div class="day-row">
-                  <div class="day-name">${sanitizeHTML(d.dayName)}</div>
-                  <div class="day-time">${sanitizeHTML(fmt(d.time))}</div>
-                </div>
-              `).join('')}
-              <div class="week-total">
-                <div style="display:flex;justify-content:space-between">
-                  <div>Total</div>
-                  <div>${sanitizeHTML(fmt(last7Days.reduce((s,d)=>s+d.time,0)))}</div>
-                </div>
+          <!-- ANALYTICS -->
+          <div class="section-card analytics-section">
+            <div class="section-header">
+              <div class="section-title">📊 Analytics</div>
+            </div>
+            <div class="analytics-grid">
+              <div class="analytics-item">
+                <div class="analytics-label">✅ Completed</div>
+                <div class="analytics-value">${analytics.total_tasks_completed || 0}</div>
+              </div>
+              <div class="analytics-item">
+                <div class="analytics-label">⏭️ Skipped</div>
+                <div class="analytics-value">${analytics.total_tasks_skipped || 0}</div>
+              </div>
+              <div class="analytics-item">
+                <div class="analytics-label">⏰ Expired</div>
+                <div class="analytics-value">${analytics.total_tasks_expired || 0}</div>
+              </div>
+              <div class="analytics-item">
+                <div class="analytics-label">🏆 Best Session</div>
+                <div class="analytics-value" style="font-size: 20px;">${fmt(analytics.longest_session || 0).substring(0, 5)}</div>
               </div>
             </div>
           </div>
         </div>
-
-        ${todaySessions.length > 0 ? `
-          <div class="card" style="margin-top:16px">
-            <div class="card-title">📝 Today's Sessions (${todaySessions.length})</div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Task Name</th>
-                  <th>Duration</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="sessions-tbody"></tbody>
-            </table>
-            <div id="sessions-pagination" class="pagination"></div>
-          </div>
-        ` : ''}
       </div>
     `;
 
     document.body.appendChild(root);
 
-    if (todaySessions.length > 0) {
-      renderSessionsPage(todaySessions, 1);
-    }
-
-    root.querySelector('#close-dashboard').addEventListener('click', () => {
-      root.remove();
-      document.removeEventListener('keydown', escHandler);
-    });
-
-    root.querySelector('#reset-btn').addEventListener('click', () => {
-      showResetDialog();
-    });
-
-    root.querySelector('#diagnostics-btn').addEventListener('click', () => {
-      runDiagnostics();
-    });
-
-    const checkUpdatesBtn = root.querySelector('#check-updates-btn');
-    if (checkUpdatesBtn) {
-      checkUpdatesBtn.addEventListener('click', () => {
-        checkUpdatesBtn.textContent = '🔄 Checking...';
-        checkUpdatesBtn.disabled = true;
-        checkForUpdates(false);
-        setTimeout(() => {
-          checkUpdatesBtn.textContent = '✓ Checked';
-          setTimeout(() => {
-            checkUpdatesBtn.textContent = '🔄 Check Updates';
-            checkUpdatesBtn.disabled = false;
-          }, 2000);
-        }, 1000);
-      });
-    }
-
-    const updateNowBtn = root.querySelector('#update-now-btn');
-    if (updateNowBtn && updateInfo) {
-      updateNowBtn.addEventListener('click', () => {
-        if (confirm(`Update to version ${updateInfo.version}?\n\nYour data will be preserved.`)) {
-          window.location.href = updateInfo.downloadUrl;
-        }
-      });
-    }
-
-    const escHandler = (e) => {
-      if (e.key === 'Escape') {
-        root.remove();
-        document.removeEventListener('keydown', escHandler);
-      }
-    };
-    document.addEventListener('keydown', escHandler);
-  }
-
-  function renderSessionsPage(sessions, page) {
-    const tbody = document.getElementById('sessions-tbody');
-    const pagination = document.getElementById('sessions-pagination');
-    if (!tbody) return;
-
-    const totalPages = Math.ceil(sessions.length / SESSIONS_PER_PAGE);
-    const startIdx = (page - 1) * SESSIONS_PER_PAGE;
-    const endIdx = startIdx + SESSIONS_PER_PAGE;
-    const pageSessions = sessions.slice(startIdx, endIdx);
-
-    tbody.innerHTML = pageSessions.map(s => {
-      const actionColor = s.action === 'submitted' ? '#10b981' : s.action === 'skipped' ? '#f59e0b' : '#ef4444';
-      return `
-        <tr>
-          <td style="font-weight:600;font-size:12px">${new Date(s.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
-          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${sanitizeHTML(s.taskName || 'Unknown')}">${sanitizeHTML(s.taskName || 'Unknown')}</td>
-          <td style="font-weight:700">${fmt(s.duration)}</td>
-          <td><span style="color:${actionColor};font-weight:600">${s.action}</span></td>
-        </tr>
+    root.querySelector('#close-dashboard').addEventListener('click', () => root.remove());
+    root.addEventListener('reset', showResetDialog);
+    root.addEventListener('export', () => {
+      const menu = document.createElement('div');
+      menu.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(30, 41, 59, 0.98); backdrop-filter: blur(20px); padding: 28px; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); z-index: 9999999; border: 1px solid rgba(148, 163, 184, 0.2);';
+      menu.innerHTML = `
+        <div style="font-size: 20px; font-weight: 800; margin-bottom: 20px; color: #f1f5f9;">Export Data</div>
+        <button onclick="this.parentElement.dispatchEvent(new CustomEvent('exportjson'))" style="width: 100%; padding: 14px; margin-bottom: 10px; background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 14px;">💾 Export as JSON</button>
+        <button onclick="this.parentElement.dispatchEvent(new CustomEvent('exportcsv'))" style="width: 100%; padding: 14px; margin-bottom: 10px; background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 14px;">📊 Export as CSV</button>
+        <button onclick="this.remove()" style="width: 100%; padding: 14px; background: #64748b; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 14px;">Cancel</button>
       `;
-    }).join('');
+      menu.addEventListener('exportjson', () => { dashboardExportJSON(); menu.remove(); });
+      menu.addEventListener('exportcsv', () => { dashboardExportCSV(); menu.remove(); });
+      document.body.appendChild(menu);
+    });
+    root.addEventListener('import', dashboardImportJSON);
 
-    if (pagination && totalPages > 1) {
-      pagination.innerHTML = '';
-      for (let p = 1; p <= totalPages; p++) {
-        const btn = document.createElement('button');
-        btn.textContent = p;
-        if (p === page) btn.disabled = true;
-        btn.addEventListener('click', () => renderSessionsPage(sessions, p));
-        pagination.appendChild(btn);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') root.remove();
+    });
+  }
+
+  // ============================================================================
+  // ⌨️ KEYBOARD SHORTCUTS
+  // ============================================================================
+  window.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && e.shiftKey) {
+      switch(e.key.toLowerCase()) {
+        case 'u':
+          e.preventDefault();
+          showDashboard();
+          break;
+        case 'r':
+          e.preventDefault();
+          showResetDialog();
+          break;
+        case 'e':
+          e.preventDefault();
+          dashboardExportJSON();
+          break;
+        case 'i':
+          e.preventDefault();
+          dashboardImportJSON();
+          break;
+        case 'c':
+          e.preventDefault();
+          dashboardExportCSV();
+          break;
       }
+    }
+  });
+
+  // ============================================================================
+  // 🔧 RESTORE ACTIVE TASK ON PAGE LOAD
+  // ============================================================================
+  function restoreActiveTask() {
+    if (!CONFIG.FIX_REFRESH_LOSS) return;
+
+    const savedTask = retrieve(KEYS.ACTIVE_TASK);
+    if (!savedTask || !savedTask.id) return;
+
+    const currentTaskId = getTaskIdFromUrl();
+
+    if (savedTask.id === currentTaskId) {
+      activeTask = savedTask;
+      log(`🔧 Restored active task: ${activeTask.taskName}`);
+
+      const awsData = parseAWSTimer();
+      if (awsData) {
+        log(`📡 AWS timer shows: ${fmt(awsData.current)}`);
+        activeTask.awsCurrent = awsData.current;
+        activeTask.awsLimit = awsData.limit;
+        activeTask.lastAws = awsData.current;
+        activeTask.lastUpdate = Date.now();
+        store(KEYS.ACTIVE_TASK, activeTask);
+        log(`✅ Updated with AWS time: ${fmt(awsData.current)}`);
+      } else {
+        log(`⚠️ Could not read AWS timer, using saved: ${fmt(savedTask.awsCurrent)}`);
+      }
+    } else {
+      log("🔄 Different task detected, clearing saved task");
+      store(KEYS.ACTIVE_TASK, null);
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Reset dialog UI
-  // ---------------------------------------------------------------------------
-  function showResetDialog() {
-    const now = Date.now();
-    if (now - lastResetTime < 1000) {
-      console.log('[SM] Please wait before opening reset dialog again');
-      return;
-    }
-    lastResetTime = now;
+  // ============================================================================
+  // 💾 AUTO-BACKUP SYSTEM
+  // ============================================================================
+  function setupAutoBackup() {
+    const performBackup = () => {
+      const lastBackup = retrieve(KEYS.LAST_BACKUP);
+      const now = Date.now();
 
-    const existing = document.getElementById('sm-reset-dialog');
-    if (existing) existing.remove();
+      if (!lastBackup || (now - new Date(lastBackup).getTime()) > CONFIG.AUTO_BACKUP_INTERVAL) {
+        const backup = {
+          timestamp: new Date().toISOString(),
+          data: {
+            history: retrieve(KEYS.HISTORY, {}),
+            sessions: retrieve(KEYS.SESSIONS, []).slice(0, 200),
+            analytics: retrieve(KEYS.ANALYTICS, {}),
+            daily_committed: retrieve(KEYS.DAILY_COMMITTED, 0),
+            count: retrieve(KEYS.COUNT, 0),
+          }
+        };
 
-    const committed = retrieve(KEYS.DAILY_COMMITTED, 0) || 0;
-    const count = retrieve(KEYS.COUNT, 0) || 0;
-
-    const dialog = document.createElement('div');
-    dialog.id = 'sm-reset-dialog';
-    dialog.innerHTML = `
-      <style>
-        #sm-reset-dialog{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:9999999999}
-        #sm-reset-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px)}
-        #sm-reset-modal{position:relative;width:360px;background:#fff;border-radius:12px;overflow:hidden;font-family:system-ui;box-shadow:0 20px 60px rgba(0,0,0,0.3)}
-        #sm-reset-modal .header{padding:20px;background:linear-gradient(135deg,#8b5cf6,#6366f1);color:white}
-        #sm-reset-modal .header-title{font-size:20px;font-weight:800}
-        #sm-reset-modal .body{padding:20px}
-        #sm-reset-modal .warning{background:#fef3c7;border-left:4px solid #f59e0b;padding:12px;margin-bottom:16px;border-radius:6px;font-size:13px;color:#92400e}
-        #sm-reset-modal .impact{background:#f3f4f6;padding:10px;border-radius:6px;margin-bottom:16px;font-size:13px}
-        #sm-reset-modal .option-btn{width:100%;padding:12px 16px;border:2px solid #e5e7eb;border-radius:8px;background:#fff;cursor:pointer;margin-bottom:10px;text-align:left;font-weight:600;transition:all 0.2s;font-size:14px}
-        #sm-reset-modal .option-btn:hover{border-color:#8b5cf6;background:#f5f3ff;transform:translateX(4px)}
-        #sm-reset-modal .footer{padding:12px 20px;background:#f9fafb;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #e5e7eb}
-        #sm-reset-modal .footer-hint{font-size:12px;color:#6b7280}
-        #sm-reset-modal .cancel-btn{padding:8px 16px;border:1px solid #d1d5db;background:white;border-radius:6px;cursor:pointer;font-weight:600;transition:all 0.2s}
-        #sm-reset-modal .cancel-btn:hover{background:#f3f4f6}
-      </style>
-      <div id="sm-reset-backdrop"></div>
-      <div id="sm-reset-modal">
-        <div class="header">
-          <div class="header-title">⚠️ Reset Confirmation</div>
-        </div>
-        <div class="body">
-          <div class="warning">⚡ This action cannot be undone. Choose wisely!</div>
-          <div class="impact">
-            <div style="font-weight:600;margin-bottom:4px">Current Data:</div>
-            <div>⏱️ Time: <strong>${fmt(committed)}</strong></div>
-            <div>📊 Count: <strong>${count}</strong></div>
-          </div>
-          <button class="option-btn" data-reset="timer">
-            🕐 Reset Timer Only<br>
-            <small style="color:#6b7280;font-weight:400">Keeps your task count (${count})</small>
-          </button>
-          <button class="option-btn" data-reset="counter">
-            🔢 Reset Counter Only<br>
-            <small style="color:#6b7280;font-weight:400">Keeps your time (${fmt(committed)})</small>
-          </button>
-          <button class="option-btn" data-reset="both">
-            🔄 Reset Both<br>
-            <small style="color:#6b7280;font-weight:400">Full reset to start fresh</small>
-          </button>
-        </div>
-        <div class="footer">
-          <div class="footer-hint">Press ESC to cancel</div>
-          <button id="reset-cancel" class="cancel-btn">Cancel</button>
-        </div>
-      </div>
-    `;
-
-    document.body.appendChild(dialog);
-
-    const escHandler = (e) => {
-      if (e.key === 'Escape') {
-        dialog.remove();
-        document.removeEventListener('keydown', escHandler, true);
+        try {
+          storeCompressed(KEYS.AUTO_BACKUP, backup);
+          store(KEYS.LAST_BACKUP, backup.timestamp);
+          log('🤖 Auto-backup completed');
+        } catch (e) {
+          log('❌ Auto-backup failed', e);
+        }
       }
     };
-    document.addEventListener('keydown', escHandler, true);
 
-    dialog.querySelector('#sm-reset-backdrop').addEventListener('click', () => {
-      dialog.remove();
-      document.removeEventListener('keydown', escHandler, true);
-    });
-
-    dialog.querySelector('#reset-cancel').addEventListener('click', () => {
-      dialog.remove();
-      document.removeEventListener('keydown', escHandler, true);
-    });
-
-    dialog.querySelectorAll('.option-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const resetType = btn.dataset.reset;
-        dialog.remove();
-        document.removeEventListener('keydown', escHandler, true);
-        performReset(resetType, 'manual');
-        updateDisplay();
-      });
-    });
+    setInterval(performBackup, 60 * 60 * 1000);
+    setTimeout(performBackup, 5000);
   }
 
-  // ---------------------------------------------------------------------------
-  // isTaskPage and tracking
-  // ---------------------------------------------------------------------------
-  function isTaskPage() {
-    try {
-      const url = window.location.href.toLowerCase();
-      const path = window.location.pathname.toLowerCase();
-      if (url.includes('/task') || url.includes('/labeling') || path.includes('/task')) return true;
-      const awsTimer = parseAWSTimer();
-      if (awsTimer) return true;
-      const bodyText = getBodyText().toLowerCase();
-      if (bodyText.includes('task time') || bodyText.includes('task description')) return true;
-      return false;
-    } catch (e) {
-      return false;
-    }
-  }
+  // ============================================================================
+  // 🔄 TRACKING LOOP
+  // ============================================================================
+  let lastAWSData = null;
 
   function trackOnce() {
-    Shield.pushDom();
     checkDailyReset();
+
     const onTaskPage = isTaskPage();
 
-    updateHomeFloatingIcon();
+    updateDisplayVisibility();
 
-    if (onTaskPage) {
-      display.style.display = 'flex';
-    } else {
-      display.style.display = 'none';
+    if (!onTaskPage) {
+      updateHomeDisplay();
       return;
     }
 
     if (hasTaskExpiredOnPage()) {
-      if (activeTask) discardActiveTask('expired');
+      log("⏰ Task expired detected on page");
+      if (activeTask) discardActiveTask("expired");
       else setIgnoreTask(getTaskIdFromUrl());
       updateDisplay();
       return;
     }
 
     const awsData = parseAWSTimer();
-
-    if (Shield.isLikelyVideoNoise() && !awsData) return;
-
-    const currentTaskId = getTaskIdFromUrl();
     const ignoreId = getIgnoreTask();
+    const currentPageId = getTaskIdFromUrl();
 
-    if (ignoreId && ignoreId === currentTaskId) {
+    if (CONFIG.FIX_IGNORE_LOOP && ignoreId && ignoreId === currentPageId) {
       if (lastAWSData && awsData && awsData.current < lastAWSData.current) {
         setIgnoreTask(null);
+        log("🔄 Timer reset detected - clearing ignore");
       } else {
         lastAWSData = awsData || lastAWSData;
         return;
@@ -1995,374 +3259,59 @@ homeFloatingIcon.innerHTML = `
       return;
     }
 
-    if (lastAWSData && awsData.current < (lastAWSData.current - CONFIG.BACKWARD_TIMER_THRESHOLD)) {
-      log('⚠️ Timer went backward! Old:', lastAWSData.current, 'New:', awsData.current);
-      log('Possible causes: New task, browser tab suspended, or page refresh');
-      clearTaskNameCache();
-      activeTask = null;
-      lastTaskId = null;
-    }
-
-    if (!activeTask || activeTask.id !== currentTaskId) {
+    if (!activeTask || activeTask.id !== currentPageId) {
       startNewTaskFromAWS(awsData);
     } else {
       updateActiveTaskFromAWS(awsData);
     }
 
-    if (typeof awsData.limit === 'number' && awsData.current >= awsData.limit) {
-      discardActiveTask('expired');
+    if (typeof awsData.limit === "number" && awsData.current >= awsData.limit) {
+      log("⏰ Task reached time limit");
+      discardActiveTask("expired");
     }
 
     lastAWSData = awsData;
     updateDisplay();
   }
 
-  // Adaptive interval tracking with error handling
-  let checkInterval = CONFIG.CHECK_INTERVAL_MS;
-  function adaptiveTrack() {
-    try {
-      trackOnce();
-    } catch (error) {
-      console.error('[SM] Tracking error:', error);
-    }
+  // ============================================================================
+  // 🚀 INITIALIZATION
+  // ============================================================================
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("🚀 SageMaker Utilization Tracker v5.0.0");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("✅ Compact home stats - VISIBLE");
+  console.log("✅ Professional dashboard - READY");
+  console.log("✅ 100% Accuracy tracking");
+  console.log("");
+  console.log("⌨️ Keyboard Shortcuts:");
+  console.log("  Ctrl+Shift+U - Dashboard");
+  console.log("  Ctrl+Shift+R - Reset");
+  console.log("  Ctrl+Shift+E - Export JSON");
+  console.log("  Ctrl+Shift+C - Export CSV");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    if (activeTask?.status === 'active') {
-      checkInterval = CONFIG.CHECK_INTERVAL_ACTIVE;
-    } else if (isTaskPage()) {
-      checkInterval = CONFIG.CHECK_INTERVAL_MS;
-    } else {
-      checkInterval = CONFIG.CHECK_INTERVAL_IDLE;
-    }
+  checkDailyReset();
+  scheduleMidnightReset();
+  initSubmissionInterceptor();
+  setupAutoBackup();
 
-    setTimeout(adaptiveTrack, checkInterval);
-  }
-
-  // Start adaptive tracking
-  adaptiveTrack();
-
-  // Check for updates on startup
-  if (UPDATE_CONFIG.CHECK_ON_STARTUP) {
-    setTimeout(() => {
-      const lastCheck = retrieve(KEYS.LAST_UPDATE_CHECK);
-      const shouldCheck = !lastCheck ||
-        (new Date() - new Date(lastCheck)) > (UPDATE_CONFIG.CHECK_INTERVAL_HOURS * 60 * 60 * 1000);
-
-      if (shouldCheck) {
-        checkForUpdates(true);
-      }
-    }, 3000);
-  }
-
-    // Initial setup
   setTimeout(() => {
-    try {
-      attachToFooter();
-      validateAndFixData();
-      updateDisplay();
-      updateHomeFloatingIcon();
-      log('✅ Sagemaker Utilization Counter initialized (Ultra-Stable Version with Auto-Update)');
+    restoreActiveTask();
+    attachToFooter();
+    updateDisplay();
+    updateHomeDisplay();
+    updateDisplayVisibility();
+    log("✅ All displays initialized!");
+  }, 1000);
 
-      // ===== ADD THIS LINE START =====
-      setTimeout(() => window.__SAGEMAKER__.checkHealth(), 2000);
-      // ===== ADD THIS LINE END =====
-    } catch (e) {
-      console.error('[SM] Initialization error:', e);
-    }
-  }, 500);
+  trackingIntervalId = setInterval(() => {
+    trackOnce();
+  }, CONFIG.CHECK_INTERVAL_MS);
 
-})();
+  const buttonsObserver = new MutationObserver(wireTaskActionButtons);
+  buttonsObserver.observe(document.body, { childList: true, subtree: true });
 
+  console.log("✅ SageMaker Tracker v5.0.0 Ready!");
 
-
-/* ===========================
-   ZERO-COMPROMISE OVERRIDES
-   Appended by assistant to harden timers & counters (anchors, buffered submits, atomic writes).
-   Non-invasive: keeps original UI and behavior while fixing drift and lost-submits.
-   Citation: original file referenced. fileciteturn2file0
-   =========================== */
-(function(){
-  'use strict';
-  if (window.__SM_ZERO_COMPROMISE_PATCHED__) return;
-  window.__SM_ZERO_COMPROMISE_PATCHED__ = true;
-
-  const LOG = (...a)=>{ if(window.console) console.log('[SM-PATCH]',...a); };
-
-  // safe wrappers matching original helpers if present
-  const _store = (typeof store === 'function') ? store : (k,v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); return true;}catch(e){return false;} };
-  const _retrieve = (typeof retrieve === 'function') ? retrieve : (k,def)=>{ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):def;}catch(e){return def;} };
-  const KEYS = (typeof KEYS !== 'undefined') ? KEYS : { COUNT: 'sm_count', DAILY_COMMITTED:'sm_daily_committed', SESSIONS:'sm_sessions' };
-
-  // IndexedDB minimal helpers
-  function openDB() {
-    return new Promise((resolve,reject)=>{
-      try {
-        const r = indexedDB.open('sm_patch_db_v1',1);
-        r.onupgradeneeded = e => {
-          const db = e.target.result;
-          if (!db.objectStoreNames.contains('s')) db.createObjectStore('s',{keyPath:'k'});
-        };
-        r.onsuccess = e => resolve(e.target.result);
-        r.onerror = e => reject(e.target.error);
-      } catch (e) { reject(e); }
-    });
-  }
-  async function idbGet(k){ try{ const db=await openDB(); return await new Promise((res,rej)=>{ const tx=db.transaction('s','readonly'); const st=tx.objectStore('s'); const rq=st.get(k); rq.onsuccess=()=>res(rq.result?rq.result.v:undefined); rq.onerror=()=>rej(rq.error); }); }catch(e){ return JSON.parse(localStorage.getItem(k)||'null'); } }
-  async function idbSet(k,v){ try{ const db=await openDB(); return await new Promise((res,rej)=>{ const tx=db.transaction('s','readwrite'); const st=tx.objectStore('s'); const rq=st.put({k:k,v:v}); rq.onsuccess=()=>res(true); rq.onerror=()=>rej(rq.error); }); }catch(e){ try{ localStorage.setItem(k,JSON.stringify(v)); return true;}catch(e2){return false;} } }
-
-  // atomic increment using IDB Tx
-  async function atomicIncrement(key,delta=1,retries=6){
-    for(let i=0;i<retries;i++){
-      try{
-        const db = await openDB();
-        const val = await new Promise((res,rej)=>{ const tx=db.transaction('s','readwrite'); const st=tx.objectStore('s'); const rq=st.get(key); rq.onsuccess=()=>{ const cur = rq.result ? rq.result.v : 0; const next = (typeof cur==='number'?cur:Number(cur)||0)+delta; const put = st.put({k:key,v:next}); put.onsuccess=()=>res(next); put.onerror=()=>rej(put.error); }; rq.onerror=()=>rej(rq.error); });
-        return val;
-      } catch(e){
-        await new Promise(r=>setTimeout(r,10+Math.random()*30));
-      }
-    }
-    // fallback to localStorage CAS
-    for(let i=0;i<4;i++){
-      try{
-        const raw = localStorage.getItem(key);
-        const cur = raw ? JSON.parse(raw) : 0;
-        const next = (typeof cur==='number'?cur:Number(cur)||0)+delta;
-        localStorage.setItem(key, JSON.stringify(next));
-        return next;
-      } catch(e){ await new Promise(r=>setTimeout(r,10)); }
-    }
-    return null;
-  }
-
-  // Submit buffer
-  const SubmitBuffer = (function(){
-    let buf=0, t=null;
-    const DELAY=160;
-    function enqueue(n=1){ buf+=n; if(t) clearTimeout(t); t=setTimeout(flush,DELAY); }
-    async function flush(){ if(t){ clearTimeout(t); t=null;} if(buf<=0) return; const v=buf; buf=0; try{ await atomicIncrement(KEYS.COUNT, v); }catch(e){ try{ const cur=JSON.parse(localStorage.getItem(KEYS.COUNT)||'0')||0; localStorage.setItem(KEYS.COUNT, JSON.stringify(cur+v)); }catch(e){} } try{ if(typeof updateDisplay==='function') updateDisplay(); if(typeof updateHomeFloatingIcon==='function') updateHomeFloatingIcon(); }catch(e){} LOG('SubmitBuffer flushed',v); }
-    function forceFlushSync(){ if(t){ clearTimeout(t); t=null;} if(buf<=0) return; try{ const cur=JSON.parse(localStorage.getItem(KEYS.COUNT)||'0')||0; localStorage.setItem(KEYS.COUNT, JSON.stringify(cur+buf)); }catch(e){} buf=0; try{ if(typeof updateDisplay==='function') updateDisplay(); }catch(e){} }
-    return { enqueue, flush, forceFlushSync, peek:()=>buf };
-  })();
-
-  // Replace commitActiveTask with atomic variant while preserving behavior
-  function commitActiveTaskPatched(){
-    try{
-      if (typeof commitActiveTask === 'function') {
-        // we wrap original to ensure atomic count increment and anchor cleanup
-        const orig = commitActiveTask;
-        return async function(){
-          const result = orig(); // original returns finalElapsed
-          try {
-            // flush any pending buffer and ensure count increment happened
-            SubmitBuffer.forceFlushSync();
-            // ensure stored count exists (orig does store(KEYS.COUNT, c))
-            // But to be safe, increment via atomic if orig didn't.
-            // We'll compare localStorage vs IDB and align
-            // If orig already incremented, atomicIncrement with delta 0 is no-op; skip.
-            // No-op here.
-          } catch(e){ LOG('post-commit patch err', e); }
-          return result;
-        };
-      } else {
-        // if absent, provide safe commit
-        return async function(){
-          if (!window.activeTask) return 0;
-          const finalElapsed = window.activeTask.awsCurrent || 0;
-          if (finalElapsed <= 0){ window.activeTask=null; return 0; }
-          const committed = _retrieve(KEYS.DAILY_COMMITTED,0)||0;
-          _store(KEYS.DAILY_COMMITTED, committed + finalElapsed);
-          await atomicIncrement(KEYS.COUNT,1);
-          window.activeTask=null;
-          try{ if(typeof updateDisplay==='function') updateDisplay(); }catch(e){}
-          return finalElapsed;
-        };
-      }
-    }catch(e){ LOG('commit patch build failed',e); return ()=>0; }
-  }
-
-  // Attach patched commitActiveTask only if original exists, wrapping it
-  if (typeof commitActiveTask === 'function') {
-    try {
-      // make a wrapper that calls original, then ensures atomic increment happened and anchor cleanup
-      const originalCommit = commitActiveTask;
-      window.commitActiveTask = function(){
-        try{
-          const res = originalCommit();
-          // after original commit, ensure submit buffer flushed and count atomic
-          try{ SubmitBuffer.forceFlushSync(); }catch(e){}
-          return res;
-        }catch(e){
-          LOG('commitActiveTask wrapper error', e);
-          return originalCommit();
-        }
-      };
-    } catch (e) { LOG('failed to override commitActiveTask', e); }
-  } else {
-    window.commitActiveTask = commitActiveTaskPatched();
-  }
-
-  // Patch startNewTaskFromAWS & updateActiveTaskFromAWS to add anchors (non-invasive)
-  function startNewTaskFromAWSPatch(awsData){
-    try{
-      if(typeof startNewTaskFromAWS === 'function') {
-        // wrap original to add anchor persistence
-        const orig = startNewTaskFromAWS;
-        return function(data){
-          const res = orig.call(this, data);
-          try{
-            const id = (typeof getTaskIdFromUrl==='function')?getTaskIdFromUrl(): (window.location.pathname+window.location.search);
-            const now = Date.now();
-            const awsCurrent = Number((data && data.current) || (res && res.awsCurrent) || 0);
-            const startTimestamp = now - awsCurrent*1000;
-            try{ idbSet('sm_anchor_'+id, { startTimestamp, createdAt: now }); }catch(e){}
-            if (window.activeTask) window.activeTask.startTimestamp = startTimestamp;
-          }catch(e){ LOG('startNewTask anchor err', e); }
-          return res;
-        };
-      }
-    }catch(e){ LOG('startNewTask patch failed', e); }
-  }
-  if (typeof startNewTaskFromAWS === 'function') {
-    try{ window.startNewTaskFromAWS = startNewTaskFromAWSPatch(); }catch(e){ LOG('attach startNewTask patch failed', e); }
-  }
-
-  function updateActiveTaskFromAWSPatch(awsData){
-    try{
-      if(typeof updateActiveTaskFromAWS === 'function') {
-        const orig = updateActiveTaskFromAWS;
-        return function(data){
-          // try restore anchor first if activeTask missing
-          try{
-            const id = (typeof getTaskIdFromUrl==='function')?getTaskIdFromUrl(): (window.location.pathname+window.location.search);
-            if (!window.activeTask){
-              idbGet('sm_anchor_'+id).then(anchor=>{
-                if (anchor && anchor.startTimestamp){
-                  const computed = Math.round((Date.now() - anchor.startTimestamp)/1000);
-                  if (data) data.current = computed;
-                  if (!window.activeTask) {
-                    // let original create activeTask but with adjusted data
-                  }
-                }
-              }).catch(()=>{});
-            }
-          }catch(e){}
-          const res = orig.call(this, data);
-          try{
-            if (window.activeTask && window.activeTask.startTimestamp){
-              // recompute awsCurrent from anchor to avoid backward jumps
-              const computed = Math.round((Date.now() - window.activeTask.startTimestamp)/1000);
-              window.activeTask.awsCurrent = Math.max(computed, window.activeTask.awsCurrent || 0);
-            }
-          }catch(e){}
-          return res;
-        };
-      }
-    }catch(e){ LOG('updateActiveTask patch failed', e); }
-  }
-  if (typeof updateActiveTaskFromAWS === 'function') {
-    try{ window.updateActiveTaskFromAWS = updateActiveTaskFromAWSPatch(); }catch(e){ LOG('attach updateActiveTask patch failed', e); }
-  }
-
-  // Harden submission interception: wrap fetch and XHR to enqueue into SubmitBuffer, keep original behavior
-  (function(){
-    try{
-      if (typeof window.fetch === 'function' && !window.__sm_fetch_patched__) {
-        window.__sm_fetch_patched__ = true;
-        const origFetch = window.fetch.bind(window);
-        window.fetch = function(...args){
-          return origFetch(...args).then(response=>{
-            try{
-              const url = typeof args[0]==='string'?args[0]:(args[0]&&args[0].url)||'';
-              const method = (args[1]&&args[1].method)?args[1].method.toUpperCase():'GET';
-              if (method==='POST' && response && response.ok && /submit|complete|finish|task\/complete/i.test(url)){
-                SubmitBuffer.enqueue(1);
-                setTimeout(()=>{ try{ if(typeof commitActiveTask==='function') commitActiveTask(); if(typeof updateDisplay==='function') updateDisplay(); if(typeof updateHomeFloatingIcon==='function') updateHomeFloatingIcon(); }catch(e){} }, 120);
-              }
-            }catch(e){ LOG('fetch intercept inner err', e); }
-            return response;
-          });
-        };
-      }
-    }catch(e){ LOG('fetch patch err', e); }
-
-    try{
-      if (typeof XMLHttpRequest !== 'undefined' && !window.__sm_xhr_patched__) {
-        window.__sm_xhr_patched__ = true;
-        const origOpen = XMLHttpRequest.prototype.open;
-        const origSend = XMLHttpRequest.prototype.send;
-        const meta = new WeakMap();
-        XMLHttpRequest.prototype.open = function(method,url,...rest){
-          try{ meta.set(this,{method:(method&&method.toUpperCase&&method.toUpperCase())||String(method), url}); }catch(e){}
-          return origOpen.apply(this,[method,url,...rest]);
-        };
-        XMLHttpRequest.prototype.send = function(body){
-          this.addEventListener('loadend', function(){
-            try{
-              const info = meta.get(this)||{};
-              const method = info.method||'';
-              const url = info.url||'';
-              if (method==='POST' && this.status>=200 && this.status<300 && /submit|complete|finish|task\/complete/i.test(url)){
-                SubmitBuffer.enqueue(1);
-                setTimeout(()=>{ try{ if(typeof commitActiveTask==='function') commitActiveTask(); if(typeof updateDisplay==='function') updateDisplay(); if(typeof updateHomeFloatingIcon==='function') updateHomeFloatingIcon(); }catch(e){} }, 120);
-              }
-            }catch(e){ LOG('xhr intercept inner err', e); }
-          });
-          return origSend.call(this, body);
-        };
-      }
-    }catch(e){ LOG('xhr patch err', e); }
-  })();
-
-  // Delegated click handler to catch buttons even if DOM changes
-  (function(){
-    if (window.__sm_click_delegated__) return;
-    window.__sm_click_delegated__ = true;
-    document.addEventListener('click',(ev)=>{
-      try{
-        const el = ev.target.closest && ev.target.closest('button, [role="button"], input[type="button"], input[type="submit"]');
-        if (!el) return;
-        const text = (el.innerText||el.value||'').toLowerCase();
-        if (!text) return;
-        if (/^\s*(submit|complete|done|finish|save|send)\b/i.test(text)){
-          SubmitBuffer.enqueue(1);
-          setTimeout(()=>{ try{ if(typeof commitActiveTask==='function') commitActiveTask(); if(typeof updateDisplay==='function') updateDisplay(); if(typeof updateHomeFloatingIcon==='function') updateHomeFloatingIcon(); }catch(e){} },120);
-        } else if (/\bskip\b/i.test(text)){
-          setTimeout(()=>{ try{ if(typeof discardActiveTask==='function') discardActiveTask('skipped'); if(typeof updateDisplay==='function') updateDisplay(); }catch(e){} },50);
-        }
-      }catch(e){ LOG('delegated click err', e); }
-    }, true);
-  })();
-
-  // Heartbeat to detect freeze/sleep and reconcile anchors + flush submits
-  (function(){
-    if (window.__sm_heartbeat_installed__) return;
-    window.__sm_heartbeat_installed__ = true;
-    let last = Date.now();
-    setInterval(async ()=>{
-      const now = Date.now();
-      const gap = now - last;
-      last = now;
-      if (gap > 5000){
-        LOG('heartbeat gap', gap);
-        try{
-          if (!window.activeTask){
-            const id = (typeof getTaskIdFromUrl==='function')?getTaskIdFromUrl():(window.location.pathname+window.location.search);
-            const anchor = await idbGet('sm_anchor_'+id);
-            if (anchor && anchor.startTimestamp){
-              const computed = Math.round((Date.now()-anchor.startTimestamp)/1000);
-              window.activeTask = window.activeTask || {};
-              window.activeTask.awsCurrent = computed;
-              window.activeTask.startTimestamp = anchor.startTimestamp;
-              if (typeof updateDisplay==='function') updateDisplay();
-            }
-          } else if (window.activeTask && window.activeTask.startTimestamp){
-            window.activeTask.awsCurrent = Math.round((Date.now()-window.activeTask.startTimestamp)/1000);
-            if (typeof updateDisplay==='function') updateDisplay();
-          }
-        }catch(e){ LOG('heartbeat reconcile err', e); }
-        try{ SubmitBuffer.forceFlushSync(); }catch(e){}
-      }
-    },1000);
-  })();
-
-  LOG('Zero-compromise patch attached.');
 })();
