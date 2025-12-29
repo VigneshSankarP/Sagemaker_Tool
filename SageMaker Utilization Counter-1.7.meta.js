@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sagemaker Utilization Counter
 // @namespace    https://github.com/VigneshSankarP
-// @version      6
+// @version      7
 // @description  Dashboard - Optimized for 8+ Hour Sessions
 // @author       PVSANKAR
 // @homepageURL  https://github.com/VigneshSankarP/Sagemaker_Tool
