@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sagemaker Utilization Counter
 // @namespace    http://tampermonkey.net/
-// @version      6
+// @version      7
 // @description  Dashboard - Optimized for 8+ Hour Sessions
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
@@ -15,21 +15,27 @@
 // @updateURL    https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/SageMaker%20Utilization%20Counter-1.7.meta.js
 // @downloadURL  https://raw.githubusercontent.com/VigneshSankarP/Sagemaker_Tool/main/SageMaker%20Utilization%20Counter-1.7.user.js
 // ==/UserScript==
+
 (function () {
   "use strict";
 
   if (window.__SM_TIMER_RUNNING__) return;
   window.__SM_TIMER_RUNNING__ = true;
 
-  console.log("🚀 SageMaker ULTIMATE v7.0 - 100% ACCURACY EDITION");
+  console.log("🚀 SageMaker ULTIMATE v7.3 - DUAL-AXIS LINE CHARTS EDITION");
 
   // ============================================================================
-  // 🔒 TRANSACTION LOCKS
+  // 🔒 TRANSACTION LOCKS - ENHANCED
   // ============================================================================
   let isCommitting = false;
   let isResetting = false;
   let lastCommitTime = 0;
+  let resetInProgress = false;
+  let forceResetActive = false;
+  let manualResetJustHappened = false;
   const COMMIT_DEBOUNCE_MS = 300;
+  const RESET_LOCK_DURATION = 3000;
+  const MANUAL_RESET_PROTECTION_DURATION = 10000;
 
   // ============================================================================
   // 🛡️ SECURITY
@@ -123,6 +129,10 @@
     TASK_NAME_RETRY_ATTEMPTS: 10,
     TASK_NAME_RETRY_DELAY: 500,
     TASK_NAME_OBSERVER_ENABLED: true,
+    PERFECT_RESET_ENABLED: true,
+    FORCE_RESET_METHOD: true,
+    RESET_VERIFICATION_ENABLED: true,
+    DISABLE_SELF_HEALING_AFTER_RESET: true,
   };
 
   function log(...args) {
@@ -168,9 +178,208 @@
     TASK_NAMES_CACHE: "sm_task_names_cache",
     TASK_TYPE_CACHE: "sm_task_type_cache",
     DETECTED_TASK_NAME: "sm_detected_task_name",
+    PERMANENT_DAILY_HITS: "sm_permanent_daily_hits",
+    RESET_LOG: "sm_reset_log",
+    FORCE_RESET_FLAG: "sm_force_reset_flag",
+    RESET_VERIFICATION: "sm_reset_verification",
+    LAST_MANUAL_RESET_TIME: "sm_last_manual_reset_time",
+    MANUAL_RESET_TODAY: "sm_manual_reset_today",
+    PERMANENT_TASK_COMMITS: "sm_permanent_task_commits",
   };
 
   let trackingIntervalId = null;
+
+  // ============================================================================
+  // 🎨 GLOBAL THEME SYSTEM - ENHANCED
+  // ============================================================================
+  const ThemeManager = {
+    currentTheme: 'dark',
+    listeners: [],
+
+    init() {
+      this.currentTheme = this.getStoredTheme();
+      this.applyGlobalTheme(this.currentTheme);
+      this.setupStorageListener();
+    },
+
+    getStoredTheme() {
+      try {
+        const saved = localStorage.getItem(KEYS.THEME);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          return (parsed === 'light') ? 'light' : 'dark';
+        }
+      } catch (e) {}
+      return 'dark';
+    },
+
+    setTheme(theme) {
+      const validTheme = (theme === 'light') ? 'light' : 'dark';
+      this.currentTheme = validTheme;
+      localStorage.setItem(KEYS.THEME, JSON.stringify(validTheme));
+      this.applyGlobalTheme(validTheme);
+      this.notifyListeners(validTheme);
+      log(`🎨 Theme changed to: ${validTheme}`);
+    },
+
+    applyGlobalTheme(theme) {
+      document.documentElement.setAttribute('data-sm-theme', theme);
+
+      // Apply to all SM elements
+      const smElements = document.querySelectorAll('[id^="sm-"], [class*="sm-"]');
+      smElements.forEach(el => {
+        el.setAttribute('data-theme', theme);
+      });
+
+      // Update home display
+      this.updateHomeDisplayTheme(theme);
+
+      // Update any open dialogs
+      this.updateDialogThemes(theme);
+    },
+
+    updateHomeDisplayTheme(theme) {
+      const homeDisplay = document.getElementById('sm-home-stats');
+      if (homeDisplay) {
+        homeDisplay.setAttribute('data-theme', theme);
+        const container = homeDisplay.querySelector('.home-stats-container');
+        if (container) {
+          if (theme === 'light') {
+            container.style.background = 'linear-gradient(135deg, rgba(248, 250, 252, 0.98) 0%, rgba(241, 245, 249, 0.98) 100%)';
+            container.style.borderColor = 'rgba(99, 102, 241, 0.4)';
+            container.style.color = '#1e293b';
+          } else {
+            container.style.background = 'linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%)';
+            container.style.borderColor = 'rgba(99, 102, 241, 0.3)';
+            container.style.color = '#f1f5f9';
+          }
+        }
+      }
+    },
+
+    updateDialogThemes(theme) {
+      const dialogs = [
+        'sm-reset-dialog',
+        'sm-target-dialog',
+        'sm-reminder-settings-dialog',
+        'sm-export-dialog',
+        'sm-reminder-popup',
+        'task-name-modal'
+      ];
+
+      dialogs.forEach(dialogId => {
+        const dialog = document.getElementById(dialogId);
+        if (dialog) {
+          dialog.setAttribute('data-theme', theme);
+        }
+      });
+    },
+
+    addListener(callback) {
+      this.listeners.push(callback);
+    },
+
+    removeListener(callback) {
+      this.listeners = this.listeners.filter(l => l !== callback);
+    },
+
+    notifyListeners(theme) {
+      this.listeners.forEach(callback => {
+        try {
+          callback(theme);
+        } catch (e) {
+          console.error('Theme listener error:', e);
+        }
+      });
+    },
+
+    setupStorageListener() {
+      window.addEventListener('storage', (e) => {
+        if (e.key === KEYS.THEME && e.newValue) {
+          try {
+            const newTheme = JSON.parse(e.newValue);
+            if (newTheme !== this.currentTheme) {
+              this.currentTheme = newTheme;
+              this.applyGlobalTheme(newTheme);
+              this.notifyListeners(newTheme);
+            }
+          } catch (err) {}
+        }
+      });
+    },
+
+    getTheme() {
+      return this.currentTheme;
+    },
+
+    cycleTheme() {
+      const next = this.currentTheme === 'dark' ? 'light' : 'dark';
+      this.setTheme(next);
+      return next;
+    },
+
+    getThemeColors() {
+      if (this.currentTheme === 'light') {
+        return {
+          bgPrimary: '#FFFFFF',
+          bgSecondary: '#F8F9FA',
+          bgTertiary: '#F1F3F5',
+          bgElevated: '#E9ECEF',
+          bgHover: '#DEE2E6',
+          borderSubtle: 'rgba(0, 0, 0, 0.06)',
+          borderDefault: 'rgba(0, 0, 0, 0.1)',
+          borderStrong: 'rgba(0, 0, 0, 0.15)',
+          textPrimary: '#212529',
+          textSecondary: '#495057',
+          textTertiary: '#868E96',
+          accent: '#6366F1',
+          accentHover: '#7C3AED',
+          success: '#10B981',
+          warning: '#F59E0B',
+          danger: '#EF4444',
+        };
+      } else {
+        return {
+          bgPrimary: '#0a0a0a',
+          bgSecondary: '#141414',
+          bgTertiary: '#1e1e1e',
+          bgElevated: '#282828',
+          bgHover: '#323232',
+          borderSubtle: 'rgba(255, 255, 255, 0.05)',
+          borderDefault: 'rgba(255, 255, 255, 0.08)',
+          borderStrong: 'rgba(255, 255, 255, 0.12)',
+          textPrimary: '#FFFFFF',
+          textSecondary: '#B0B0B0',
+          textTertiary: '#707070',
+          accent: '#6366F1',
+          accentHover: '#7C3AED',
+          success: '#10B981',
+          warning: '#F59E0B',
+          danger: '#EF4444',
+        };
+      }
+    }
+  };
+
+  // Initialize theme manager
+  ThemeManager.init();
+
+  // Legacy compatibility functions
+  function getTheme() {
+    return ThemeManager.getTheme();
+  }
+
+  function setTheme(theme) {
+    ThemeManager.setTheme(theme);
+  }
+
+  function applyTheme(theme) {
+    ThemeManager.applyGlobalTheme(theme);
+  }
+
+  function cycleTheme() {
+    return ThemeManager.cycleTheme();
+  }
 
   // ============================================================================
   // 🛡️ STARTUP DATA VALIDATION - PREVENTS CORRUPTION
@@ -320,7 +529,7 @@
   }
 
   // ============================================================================
-  // 💾 STORAGE FUNCTIONS WITH VALIDATION
+  // 💾 STORAGE FUNCTIONS WITH VALIDATION - ENHANCED
   // ============================================================================
   function store(key, value) {
     try {
@@ -375,8 +584,15 @@
     }
   }
 
-  // Safe number retrieval helper
+  // Safe number retrieval helper - ENHANCED
   function retrieveNumber(key, fallback = 0) {
+    // During manual reset, always return 0 for timer and count
+    if (manualResetJustHappened) {
+      if (key === KEYS.DAILY_COMMITTED || key === KEYS.COUNT) {
+        return 0;
+      }
+    }
+
     try {
       const v = localStorage.getItem(key);
       if (v === null || v === undefined) return fallback;
@@ -392,6 +608,30 @@
       return fallback;
     } catch (e) {
       return fallback;
+    }
+  }
+
+  // Direct localStorage write - bypasses all validation for reset
+  function forceStore(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      // Verify write
+      const verify = localStorage.getItem(key);
+      const parsed = JSON.parse(verify);
+      return parsed === value;
+    } catch (e) {
+      console.error(`[SM] Force store failed for ${key}:`, e);
+      return false;
+    }
+  }
+
+  // Direct localStorage read
+  function forceRetrieve(key) {
+    try {
+      const v = localStorage.getItem(key);
+      return v !== null ? JSON.parse(v) : null;
+    } catch (e) {
+      return null;
     }
   }
 
@@ -524,6 +764,31 @@
             log("❌ Storage event error:", err);
           }
         }
+
+        // Sync theme changes across tabs
+        if (e.key === KEYS.THEME && e.newValue) {
+          try {
+            const newTheme = JSON.parse(e.newValue);
+            ThemeManager.applyGlobalTheme(newTheme);
+          } catch (err) {}
+        }
+
+        // Sync reset across tabs
+        if (e.key === KEYS.FORCE_RESET_FLAG && e.newValue) {
+          try {
+            const resetData = JSON.parse(e.newValue);
+            if (resetData.timestamp > Date.now() - 5000) {
+              // Recent reset from another tab
+              manualResetJustHappened = true;
+              setTimeout(() => {
+                manualResetJustHappened = false;
+              }, MANUAL_RESET_PROTECTION_DURATION);
+              updateDisplay();
+              updateHomeDisplay();
+              updateTopBanner();
+            }
+          } catch (err) {}
+        }
       });
 
       if (!window.name) {
@@ -553,34 +818,6 @@
     if (hour < 12) return `${hour} AM`;
     return `${hour - 12} PM`;
   }
-
-  // ============================================================================
-  // 🎨 THEME SYSTEM - ONLY DARK AND LIGHT
-  // ============================================================================
-  function getTheme() {
-    const saved = retrieve(KEYS.THEME, 'dark');
-    return (saved === 'light') ? 'light' : 'dark';
-  }
-
-  function setTheme(theme) {
-    const validTheme = (theme === 'light') ? 'light' : 'dark';
-    store(KEYS.THEME, validTheme);
-    applyTheme(validTheme);
-  }
-
-  function applyTheme(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
-  }
-
-  function cycleTheme() {
-    const current = getTheme();
-    const next = current === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    log(`🎨 Theme: ${current} → ${next}`);
-    return next;
-  }
-
-  applyTheme(getTheme());
 
   // ============================================================================
   // 🎚️ PROGRESS BAR TOGGLE
@@ -894,7 +1131,149 @@
   };
 
   // ============================================================================
-  // 🤖 SMART ENGINE (Renamed from AI)
+  // 🔧 MANUAL RESET TRACKER - NEW
+  // ============================================================================
+  const ManualResetTracker = {
+    getLastResetTime() {
+      const today = todayStr();
+      const resetData = retrieve(KEYS.MANUAL_RESET_TODAY, {});
+      if (resetData.date === today && resetData.timestamp) {
+        return resetData.timestamp;
+      }
+      return null;
+    },
+
+    setResetTime() {
+      const today = todayStr();
+      store(KEYS.MANUAL_RESET_TODAY, {
+        date: today,
+        timestamp: Date.now()
+      });
+      store(KEYS.LAST_MANUAL_RESET_TIME, Date.now());
+      log("📌 Manual reset time recorded: " + new Date().toISOString());
+    },
+
+    wasResetToday() {
+      const today = todayStr();
+      const resetData = retrieve(KEYS.MANUAL_RESET_TODAY, {});
+      return resetData.date === today && resetData.timestamp;
+    },
+
+    clearForNewDay() {
+      const today = todayStr();
+      const resetData = retrieve(KEYS.MANUAL_RESET_TODAY, {});
+      if (resetData.date !== today) {
+        store(KEYS.MANUAL_RESET_TODAY, {});
+        store(KEYS.LAST_MANUAL_RESET_TIME, null);
+        log("🌅 Manual reset tracker cleared for new day");
+      }
+    },
+
+    shouldSkipSessionsBeforeReset(sessionDate) {
+      const lastReset = this.getLastResetTime();
+      if (!lastReset) return false;
+
+      const sessionTime = new Date(sessionDate).getTime();
+      return sessionTime < lastReset;
+    }
+  };
+
+  // ============================================================================
+  // 📊 PERMANENT TASK COMMITS TRACKER - NOT AFFECTED BY MANUAL RESET
+  // ============================================================================
+  const PermanentTaskCommits = {
+    // Get permanent commits for today (not affected by manual reset)
+    getTodayCommits() {
+      const today = todayStr();
+      const data = retrieve(KEYS.PERMANENT_TASK_COMMITS, {});
+      if (!data[today]) {
+        data[today] = {
+          tasks: {},
+          totalCommits: 0
+        };
+        store(KEYS.PERMANENT_TASK_COMMITS, data);
+      }
+      return data[today];
+    },
+
+    // Add a commit for a task
+    addCommit(taskName, duration) {
+      const today = todayStr();
+      const data = retrieve(KEYS.PERMANENT_TASK_COMMITS, {});
+
+      if (!data[today]) {
+        data[today] = {
+          tasks: {},
+          totalCommits: 0
+        };
+      }
+
+      const normalizedName = taskName || 'Unknown Task';
+
+      if (!data[today].tasks[normalizedName]) {
+        data[today].tasks[normalizedName] = {
+          commits: 0,
+          totalTime: 0,
+          avgDuration: 0
+        };
+      }
+
+      data[today].tasks[normalizedName].commits++;
+      data[today].tasks[normalizedName].totalTime += (duration || 0);
+      data[today].tasks[normalizedName].avgDuration =
+        data[today].tasks[normalizedName].totalTime / data[today].tasks[normalizedName].commits;
+      data[today].totalCommits++;
+
+      store(KEYS.PERMANENT_TASK_COMMITS, data);
+
+      log(`📊 Permanent commit added: ${normalizedName} (Total: ${data[today].tasks[normalizedName].commits})`);
+    },
+
+    // Get task data for today
+    getTaskData(taskName) {
+      const todayData = this.getTodayCommits();
+      return todayData.tasks[taskName] || { commits: 0, totalTime: 0, avgDuration: 0 };
+    },
+
+    // Get all tasks for today
+    getAllTasks() {
+      const todayData = this.getTodayCommits();
+      return todayData.tasks;
+    },
+
+    // Get total commits for today
+    getTotalCommits() {
+      const todayData = this.getTodayCommits();
+      return todayData.totalCommits || 0;
+    },
+
+    // Clean up old data (keep only last 30 days)
+    cleanup() {
+      const data = retrieve(KEYS.PERMANENT_TASK_COMMITS, {});
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - 30);
+      const cutoffStr = cutoffDate.toISOString().split('T')[0];
+
+      let cleaned = false;
+      Object.keys(data).forEach(date => {
+        if (date < cutoffStr) {
+          delete data[date];
+          cleaned = true;
+        }
+      });
+
+      if (cleaned) {
+        store(KEYS.PERMANENT_TASK_COMMITS, data);
+        log("🧹 Old permanent task commits cleaned up");
+      }
+    }
+  };
+
+  // Run cleanup on startup
+  PermanentTaskCommits.cleanup();
+
+  // ============================================================================
+  // 🤖 SMART ENGINE
   // ============================================================================
   class SmartEngineClass {
     constructor() {
@@ -960,29 +1339,59 @@
       this.errorLog = retrieve(KEYS.SMART_ERROR_LOG, []);
       this.recoveryLog = retrieve(KEYS.SMART_RECOVERY_LOG, []);
 
+      this.isPaused = false;
+
       if (this.config.real_time_validation) {
         this.startRealTimeValidation();
       }
 
-      log("🤖 Smart Engine v7.0 initialized");
+      log("🤖 Smart Engine v7.3 initialized");
     }
 
     startRealTimeValidation() {
       setInterval(() => {
-        this.validateAccuracyRealTime();
+        if (!this.isPaused) {
+          this.validateAccuracyRealTime();
+        }
       }, 5000);
     }
 
     validateAccuracyRealTime() {
+      // Skip validation during reset or if paused
+      if (forceResetActive || resetInProgress || isResetting || this.isPaused || manualResetJustHappened) {
+        log("⏸️ Skipping validation - reset/pause active");
+        return;
+      }
+
+      // Skip if manual reset happened today and self-healing is disabled after reset
+      if (CONFIG.DISABLE_SELF_HEALING_AFTER_RESET && ManualResetTracker.wasResetToday()) {
+        log("⏸️ Skipping validation - manual reset happened today");
+        return;
+      }
+
       try {
         const startTime = performance.now();
         const committed = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
         const sessions = retrieve(KEYS.SESSIONS, []) || [];
         const today = todayStr();
 
+        // Get the last manual reset time
+        const lastManualResetTime = ManualResetTracker.getLastResetTime();
+
+        // Only count sessions AFTER the last manual reset
         const todaySessions = sessions.filter(s => {
           const sessionDate = new Date(s.date).toISOString().split('T')[0];
-          return sessionDate === today;
+          if (sessionDate !== today) return false;
+
+          // If there was a manual reset today, only count sessions after that
+          if (lastManualResetTime) {
+            const sessionTime = new Date(s.date).getTime();
+            if (sessionTime < lastManualResetTime) {
+              return false;
+            }
+          }
+
+          return true;
         });
 
         const expectedTotal = todaySessions.reduce((sum, s) => {
@@ -998,10 +1407,11 @@
         const responseTime = performance.now() - startTime;
         this.performanceMetrics.response_time = responseTime.toFixed(2);
 
-        if (diff > 5) {
-          log(`⚠️ Alert: Accuracy drift detected!`);
+        // Only attempt to fix if difference is significant AND no manual reset happened
+        if (diff > 60 && !forceResetActive && !ManualResetTracker.wasResetToday()) {
+          log(`⚠️ Alert: Accuracy drift detected! Expected: ${expectedTotal}, Actual: ${actual}, Diff: ${diff}`);
 
-          if (this.config.self_healing) {
+          if (this.config.self_healing && !forceResetActive && !manualResetJustHappened) {
             log("🔧 Auto-repairing...");
             this.performSelfHeal('accuracy_drift', {
               expected: expectedTotal,
@@ -1025,16 +1435,30 @@
     }
 
     performSelfHeal(issueType, data) {
+      // Skip during manual reset or if recently reset
+      if (forceResetActive || resetInProgress || manualResetJustHappened) {
+        log("⏸️ Skipping self-heal - reset in progress or just happened");
+        return;
+      }
+
+      // Skip if manual reset happened today
+      if (CONFIG.DISABLE_SELF_HEALING_AFTER_RESET && ManualResetTracker.wasResetToday()) {
+        log("⏸️ Skipping self-heal - manual reset happened today");
+        return;
+      }
+
       try {
         log(`🔧 Self-Heal: ${issueType}`);
 
         switch(issueType) {
           case 'accuracy_drift':
-            store(KEYS.DAILY_COMMITTED, data.corrected_value);
-            this.stats.self_heals++;
-            this.stats.auto_fixes++;
-            this.stats.data_recoveries++;
-            this.logRecovery(issueType, `Auto-corrected drift`, data);
+            if (!forceResetActive && !manualResetJustHappened && !ManualResetTracker.wasResetToday()) {
+              store(KEYS.DAILY_COMMITTED, data.corrected_value);
+              this.stats.self_heals++;
+              this.stats.auto_fixes++;
+              this.stats.data_recoveries++;
+              this.logRecovery(issueType, `Auto-corrected drift`, data);
+            }
             break;
 
           case 'corrupted_data':
@@ -1058,7 +1482,7 @@
 
         this.saveState();
 
-        if (typeof updateDisplay === 'function') {
+        if (typeof updateDisplay === 'function' && !forceResetActive && !manualResetJustHappened) {
           updateDisplay();
         }
 
@@ -1069,6 +1493,8 @@
     }
 
     detectDataCorruption() {
+      if (forceResetActive || manualResetJustHappened) return false;
+
       try {
         const committed = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
         const count = retrieveNumber(KEYS.COUNT, 0);
@@ -1428,7 +1854,7 @@
         store(KEYS.SMART_HEALTH, this.health);
         this.stats.stability_checks++;
 
-        if (issues.length > 0 && this.config.self_healing) {
+        if (issues.length > 0 && this.config.self_healing && !forceResetActive && !manualResetJustHappened && !ManualResetTracker.wasResetToday()) {
           issues.forEach(issue => {
             if (issue.includes('Invalid daily_committed')) {
               this.performSelfHeal('corrupted_data', { field: 'daily_committed' });
@@ -1495,7 +1921,7 @@
         }
         store(KEYS.SMART_ERROR_LOG, this.errorLog);
 
-        if (this.config.self_healing) {
+        if (this.config.self_healing && !forceResetActive && !manualResetJustHappened) {
           this.attemptRecovery(error, context);
         }
 
@@ -1507,6 +1933,8 @@
     }
 
     attemptRecovery(error, context) {
+      if (forceResetActive || manualResetJustHappened || ManualResetTracker.wasResetToday()) return;
+
       try {
         switch(context) {
           case 'storage':
@@ -1614,7 +2042,7 @@
     }
 
     protect() {
-      if (!this.config.protection_enabled) return;
+      if (!this.config.protection_enabled || forceResetActive || manualResetJustHappened) return;
 
       this.detectDataCorruption();
       this.validateSessions();
@@ -1668,7 +2096,7 @@
     getStatus() {
       return {
         enabled: CONFIG.SMART_ENABLED,
-        version: '7.0-ULTIMATE',
+        version: '7.3-ULTIMATE',
         counting_mode: CONFIG.COUNTING_MODE,
         stats: this.stats,
         performance: this.performanceMetrics,
@@ -1679,11 +2107,15 @@
         anomalies: this.anomalies.slice(0, 5),
         recent_errors: this.errorLog.slice(-5),
         recent_recoveries: this.recoveryLog.slice(-5),
-        delayTracking: DelayAccumulator.getStats()
+        delayTracking: DelayAccumulator.getStats(),
+        isPaused: this.isPaused,
+        manualResetToday: ManualResetTracker.wasResetToday()
       };
     }
 
     run() {
+      if (forceResetActive || resetInProgress || this.isPaused || manualResetJustHappened) return;
+
       try {
         this.protect();
         this.learn();
@@ -1703,6 +2135,17 @@
         this.handleError(e, 'smart_run');
       }
     }
+
+    // Pause during reset
+    pause() {
+      this.isPaused = true;
+      log("🤖 Smart Engine paused for reset");
+    }
+
+    resume() {
+      this.isPaused = false;
+      log("🤖 Smart Engine resumed");
+    }
   }
 
   const SmartEngine = new SmartEngineClass();
@@ -1710,7 +2153,9 @@
 
   if (CONFIG.SMART_ENABLED) {
     setInterval(() => {
-      SmartEngine.run();
+      if (!forceResetActive && !resetInProgress && !manualResetJustHappened) {
+        SmartEngine.run();
+      }
     }, CONFIG.SMART_CHECK_INTERVAL);
 
     setTimeout(() => {
@@ -1739,7 +2184,7 @@
       this.requestNotificationPermission();
       this.startReminderLoop();
 
-      log("🔔 Ultra Reminder System v7.0 PRO initialized");
+      log("🔔 Ultra Reminder System v7.3 PRO initialized");
     }
 
     loadSettings() {
@@ -1976,8 +2421,12 @@
       const existing = document.getElementById('sm-reminder-popup');
       if (existing) existing.remove();
 
+      const theme = ThemeManager.getTheme();
+      const colors = ThemeManager.getThemeColors();
+
       const popup = document.createElement('div');
       popup.id = 'sm-reminder-popup';
+      popup.setAttribute('data-theme', theme);
       popup.className = `sm-reminder-popup urgency-${urgency} position-${this.settings.notification.position}`;
 
       const urgencyColors = {
@@ -1987,7 +2436,7 @@
         critical: { border: '#dc2626', bg: 'rgba(220, 38, 38, 0.2)', glow: 'rgba(220, 38, 38, 0.5)' }
       };
 
-      const colors = urgencyColors[urgency] || urgencyColors.normal;
+      const uColors = urgencyColors[urgency] || urgencyColors.normal;
 
       popup.innerHTML = `
         <style>
@@ -1996,7 +2445,7 @@
             to { transform: translateX(0); opacity: 1; }
           }
 
-                    @keyframes slideInLeft {
+          @keyframes slideInLeft {
             from { transform: translateX(-400px); opacity: 0; }
             to { transform: translateX(0); opacity: 1; }
           }
@@ -2013,8 +2462,8 @@
           }
 
           @keyframes glow {
-            0%, 100% { box-shadow: 0 0 20px ${colors.glow}, 0 8px 32px rgba(0,0,0,0.4); }
-            50% { box-shadow: 0 0 40px ${colors.glow}, 0 12px 48px rgba(0,0,0,0.6); }
+            0%, 100% { box-shadow: 0 0 20px ${uColors.glow}, 0 8px 32px rgba(0,0,0,0.4); }
+            50% { box-shadow: 0 0 40px ${uColors.glow}, 0 12px 48px rgba(0,0,0,0.6); }
           }
 
           .sm-reminder-popup {
@@ -2023,12 +2472,12 @@
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             min-width: 360px;
             max-width: 420px;
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.98) 0%, rgba(30, 41, 59, 0.98) 100%);
+            background: ${theme === 'light' ? 'linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.98) 100%)' : 'linear-gradient(135deg, rgba(15, 23, 42, 0.98) 0%, rgba(30, 41, 59, 0.98) 100%)'};
             backdrop-filter: blur(30px) saturate(180%);
             -webkit-backdrop-filter: blur(30px) saturate(180%);
-            border: 2px solid ${colors.border};
+            border: 2px solid ${uColors.border};
             border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px ${theme === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(255, 255, 255, 0.05)'} inset;
             overflow: hidden;
             animation: glow 2s ease-in-out infinite;
           }
@@ -2068,7 +2517,7 @@
             left: 0;
             right: 0;
             height: 3px;
-            background: linear-gradient(90deg, transparent, ${colors.border}, transparent);
+            background: linear-gradient(90deg, transparent, ${uColors.border}, transparent);
             animation: shimmer 2s linear infinite;
           }
 
@@ -2079,17 +2528,17 @@
 
           .sm-reminder-header {
             padding: 18px 20px;
-            background: ${colors.bg};
+            background: ${uColors.bg};
             display: flex;
             align-items: center;
             gap: 12px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            border-bottom: 1px solid ${theme === 'light' ? 'rgba(0,0,0,0.1)' : 'rgba(255, 255, 255, 0.1)'};
           }
 
           .sm-reminder-icon {
             font-size: 28px;
             animation: pulse 2s ease-in-out infinite;
-            filter: drop-shadow(0 2px 8px ${colors.glow});
+            filter: drop-shadow(0 2px 8px ${uColors.glow});
           }
 
           .sm-reminder-title-section {
@@ -2099,7 +2548,7 @@
           .sm-reminder-title {
             font-size: 16px;
             font-weight: 900;
-            color: #f1f5f9;
+            color: ${colors.textPrimary};
             margin: 0 0 4px 0;
             line-height: 1.2;
           }
@@ -2107,7 +2556,7 @@
           .sm-reminder-urgency-badge {
             display: inline-block;
             padding: 2px 8px;
-            background: ${colors.border};
+            background: ${uColors.border};
             color: white;
             border-radius: 6px;
             font-size: 9px;
@@ -2120,8 +2569,8 @@
             width: 28px;
             height: 28px;
             border: none;
-            background: rgba(100, 116, 139, 0.3);
-            color: #cbd5e1;
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.1)' : 'rgba(100, 116, 139, 0.3)'};
+            color: ${colors.textSecondary};
             border-radius: 8px;
             cursor: pointer;
             font-size: 16px;
@@ -2144,7 +2593,7 @@
 
           .sm-reminder-message {
             font-size: 14px;
-            color: #cbd5e1;
+            color: ${colors.textSecondary};
             line-height: 1.6;
             margin-bottom: 16px;
             font-weight: 500;
@@ -2155,10 +2604,10 @@
             align-items: center;
             justify-content: center;
             padding: 16px;
-            background: rgba(0, 0, 0, 0.3);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(0, 0, 0, 0.3)'};
             border-radius: 12px;
             margin-bottom: 16px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid ${theme === 'light' ? 'rgba(0,0,0,0.1)' : 'rgba(255, 255, 255, 0.1)'};
           }
 
           .sm-reminder-countdown-icon {
@@ -2169,15 +2618,15 @@
           .sm-reminder-countdown-time {
             font-size: 32px;
             font-weight: 900;
-            color: ${colors.border};
+            color: ${uColors.border};
             font-variant-numeric: tabular-nums;
-            text-shadow: 0 2px 12px ${colors.glow};
+            text-shadow: 0 2px 12px ${uColors.glow};
             font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
           }
 
           .sm-reminder-countdown-label {
             font-size: 11px;
-            color: #94a3b8;
+            color: ${colors.textTertiary};
             text-transform: uppercase;
             font-weight: 700;
             margin-left: 8px;
@@ -2231,24 +2680,24 @@
           }
 
           .sm-reminder-btn-tertiary {
-            background: rgba(100, 116, 139, 0.3);
-            color: #cbd5e1;
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.1)' : 'rgba(100, 116, 139, 0.3)'};
+            color: ${colors.textSecondary};
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
           }
 
           .sm-reminder-btn-tertiary:hover {
-            background: rgba(100, 116, 139, 0.4);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.15)' : 'rgba(100, 116, 139, 0.4)'};
           }
 
           .sm-reminder-footer {
             padding: 12px 20px;
-            background: rgba(0, 0, 0, 0.2);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(0, 0, 0, 0.2)'};
             display: flex;
             justify-content: space-between;
             align-items: center;
             font-size: 10px;
-            color: #64748b;
-            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            color: ${colors.textTertiary};
+            border-top: 1px solid ${theme === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(255, 255, 255, 0.05)'};
           }
 
           .sm-reminder-settings-link {
@@ -2567,6 +3016,8 @@
 
         const dialog = document.createElement('div');
         dialog.id = 'sm-reminder-settings-dialog';
+        const theme = ThemeManager.getTheme();
+        dialog.setAttribute('data-theme', theme);
         dialog.innerHTML = this.getSettingsDialogHTML();
 
         document.body.appendChild(dialog);
@@ -2577,6 +3028,9 @@
     }
 
     getSettingsDialogHTML() {
+      const theme = ThemeManager.getTheme();
+      const colors = ThemeManager.getThemeColors();
+
       return `
         <style>
           @keyframes fadeIn {
@@ -2603,7 +3057,7 @@
           #sm-reminder-backdrop {
             position: absolute;
             inset: 0;
-            background: linear-gradient(135deg, rgba(0,0,0,0.7) 0%, rgba(15,23,42,0.8) 100%);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.5)' : 'linear-gradient(135deg, rgba(0,0,0,0.7) 0%, rgba(15,23,42,0.8) 100%)'};
             backdrop-filter: blur(20px);
           }
 
@@ -2612,7 +3066,7 @@
             width: 550px;
             max-width: calc(100% - 40px);
             max-height: calc(100vh - 40px);
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.98) 0%, rgba(15, 23, 42, 0.98) 100%);
+            background: ${theme === 'light' ? 'linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.98) 100%)' : 'linear-gradient(135deg, rgba(30, 41, 59, 0.98) 0%, rgba(15, 23, 42, 0.98) 100%)'};
             backdrop-filter: blur(40px);
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(99, 102, 241, 0.3);
@@ -2647,7 +3101,7 @@
           }
 
           .reminder-settings-body::-webkit-scrollbar-track {
-            background: rgba(15, 23, 42, 0.5);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(15, 23, 42, 0.5)'};
             border-radius: 4px;
           }
 
@@ -2659,15 +3113,15 @@
           .settings-section {
             margin-bottom: 20px;
             padding: 16px;
-            background: rgba(15, 23, 42, 0.6);
-            border: 1px solid rgba(99, 102, 241, 0.2);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(15, 23, 42, 0.6)'};
+            border: 1px solid ${theme === 'light' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.2)'};
             border-radius: 12px;
           }
 
           .settings-section-title {
             font-size: 14px;
             font-weight: 800;
-            color: #f1f5f9;
+            color: ${colors.textPrimary};
             margin-bottom: 14px;
             display: flex;
             align-items: center;
@@ -2680,7 +3134,7 @@
             align-items: center;
             margin-bottom: 12px;
             padding-bottom: 12px;
-            border-bottom: 1px solid rgba(71, 85, 105, 0.3);
+            border-bottom: 1px solid ${theme === 'light' ? 'rgba(0,0,0,0.08)' : 'rgba(71, 85, 105, 0.3)'};
           }
 
           .settings-row:last-child {
@@ -2693,13 +3147,13 @@
             flex: 1;
             font-size: 12px;
             font-weight: 600;
-            color: #cbd5e1;
+            color: ${colors.textSecondary};
             line-height: 1.4;
           }
 
           .settings-label-desc {
             font-size: 10px;
-            color: #94a3b8;
+            color: ${colors.textTertiary};
             margin-top: 3px;
             font-weight: 500;
           }
@@ -2714,11 +3168,11 @@
             position: relative;
             width: 50px;
             height: 26px;
-            background: rgba(100, 116, 139, 0.5);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.15)' : 'rgba(100, 116, 139, 0.5)'};
             border-radius: 13px;
             cursor: pointer;
             transition: all 0.3s;
-            border: 2px solid rgba(100, 116, 139, 0.3);
+            border: 2px solid ${theme === 'light' ? 'rgba(0,0,0,0.1)' : 'rgba(100, 116, 139, 0.3)'};
           }
 
           .toggle-switch.active {
@@ -2745,10 +3199,10 @@
           .settings-input {
             width: 80px;
             padding: 6px 10px;
-            background: rgba(15, 23, 42, 0.8);
-            border: 2px solid rgba(99, 102, 241, 0.3);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(15, 23, 42, 0.8)'};
+            border: 2px solid ${theme === 'light' ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.3)'};
             border-radius: 8px;
-            color: #f1f5f9;
+            color: ${colors.textPrimary};
             font-size: 12px;
             font-weight: 700;
             text-align: center;
@@ -2763,10 +3217,10 @@
 
           .settings-select {
             padding: 6px 10px;
-            background: rgba(15, 23, 42, 0.8);
-            border: 2px solid rgba(99, 102, 241, 0.3);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(15, 23, 42, 0.8)'};
+            border: 2px solid ${theme === 'light' ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.3)'};
             border-radius: 8px;
-            color: #f1f5f9;
+            color: ${colors.textPrimary};
             font-size: 12px;
             font-weight: 700;
             cursor: pointer;
@@ -2789,7 +3243,7 @@
           .volume-slider {
             flex: 1;
             height: 6px;
-            background: rgba(100, 116, 139, 0.3);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.1)' : 'rgba(100, 116, 139, 0.3)'};
             border-radius: 3px;
             outline: none;
             -webkit-appearance: none;
@@ -2832,10 +3286,10 @@
 
           .reminder-settings-footer {
             padding: 16px 24px;
-            background: rgba(0, 0, 0, 0.2);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(0, 0, 0, 0.2)'};
             display: flex;
             gap: 10px;
-            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            border-top: 1px solid ${theme === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(255, 255, 255, 0.05)'};
           }
 
           .reminder-settings-btn {
@@ -2862,16 +3316,16 @@
           }
 
           .reminder-settings-btn-cancel {
-            background: rgba(100, 116, 139, 0.3);
-            color: #cbd5e1;
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.1)' : 'rgba(100, 116, 139, 0.3)'};
+            color: ${colors.textSecondary};
           }
 
           .reminder-settings-btn-cancel:hover {
-            background: rgba(100, 116, 139, 0.5);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.15)' : 'rgba(100, 116, 139, 0.5)'};
           }
 
           .master-toggle-banner {
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.2) 100%);
+            background: ${theme === 'light' ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%)' : 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.2) 100%)'};
             border: 2px solid #ef4444;
             padding: 14px;
             border-radius: 10px;
@@ -2882,7 +3336,7 @@
           }
 
           .master-toggle-banner.enabled {
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.2) 100%);
+            background: ${theme === 'light' ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(5, 150, 105, 0.1) 100%)' : 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.2) 100%)'};
             border-color: #10b981;
           }
 
@@ -2893,13 +3347,13 @@
           .master-toggle-title {
             font-size: 14px;
             font-weight: 900;
-            color: #f1f5f9;
+            color: ${colors.textPrimary};
             margin-bottom: 3px;
           }
 
           .master-toggle-desc {
             font-size: 11px;
-            color: #cbd5e1;
+            color: ${colors.textSecondary};
             font-weight: 500;
           }
 
@@ -3308,15 +3762,15 @@
             if (match && match[1]) {
               const text = match[1].trim();
               if (TaskNameDetector.isValidTaskName(text)) {
-                return `Classify: ${text}`;
+                return text;
               }
             }
           }
 
-          // Check for "Classify the video - X" pattern
-          const classifyMatch = bodyText.match(/Classify the (?:video|image)\s*[-–]\s*([a-zA-Z0-9_-]+)/i);
+          // Check for "Classify the video - X" pattern - FULL NAME
+          const classifyMatch = bodyText.match(/Classify the (?:video|image)\s*[-–]\s*([a-zA-Z0-9_\-\s]+?)(?:\.\.\.|$|\n)/i);
           if (classifyMatch && classifyMatch[1]) {
-            return `Classify: ${classifyMatch[1]}`;
+            return classifyMatch[1].trim();
           }
 
           return null;
@@ -3353,25 +3807,25 @@
         }
       },
 
-      // Method 4: Queue/Job name from URL or page
+      // Method 4: Queue/Job name from URL or page - FULL NAME
       {
         name: 'queue_name',
         priority: 4,
         extract: () => {
-          // Try to get from page
+          // Try to get from page - full name
           const bodyText = document.body.innerText || "";
-          const queueMatch = bodyText.match(/(?:queue|job|batch|project)[:\s]+([a-zA-Z0-9_-]{5,100})/i);
+          const queueMatch = bodyText.match(/(?:queue|job|batch|project)[:\s]+([a-zA-Z0-9_\-\s]{5,200})/i);
           if (queueMatch && queueMatch[1]) {
-            return `Queue: ${queueMatch[1]}`;
+            return queueMatch[1].trim();
           }
 
           // Try from URL
           const url = window.location.href;
-          const urlMatch = url.match(/\/([a-zA-Z0-9_-]{10,50})(?:\/|$|\?)/);
+          const urlMatch = url.match(/\/([a-zA-Z0-9_-]{10,100})(?:\/|$|\?)/);
           if (urlMatch && urlMatch[1]) {
             // Check if it looks like a task/queue ID
             if (/[a-zA-Z]/.test(urlMatch[1]) && /[0-9]/.test(urlMatch[1])) {
-              return `Task: ${urlMatch[1]}`;
+              return urlMatch[1];
             }
           }
 
@@ -3379,18 +3833,18 @@
         }
       },
 
-      // Method 5: Video/Image specific patterns
+      // Method 5: Video/Image specific patterns - FULL NAME
       {
         name: 'media_task',
         priority: 5,
         extract: () => {
           const bodyText = document.body.innerText || "";
 
-          // Liveness/Deepfake detection
+          // Liveness/Deepfake detection - get full name
           if (bodyText.toLowerCase().includes('liveness') || bodyText.toLowerCase().includes('deepfake')) {
-            const typeMatch = bodyText.match(/(liveness[^,.\n]*|deepfake[^,.\n]*)/i);
+            const typeMatch = bodyText.match(/(liveness[a-zA-Z0-9_\-\s]*|deepfake[a-zA-Z0-9_\-\s]*)/i);
             if (typeMatch) {
-              return `Video Classification: ${typeMatch[1].trim()}`;
+              return typeMatch[1].trim();
             }
             return 'Video Classification Task';
           }
@@ -3414,15 +3868,15 @@
         extract: () => {
           const bodyText = document.body.innerText || "";
           const questionPatterns = [
-            /(?:What|Which|Is|Does|Are|Can)\s+[^?]{10,150}\?/i,
-            /Please\s+(?:select|choose|identify|classify)[^.]{10,150}\./i
+            /(?:What|Which|Is|Does|Are|Can)\s+[^?]{10,200}\?/i,
+            /Please\s+(?:select|choose|identify|classify)[^.]{10,200}\./i
           ];
 
           for (const pattern of questionPatterns) {
             const match = bodyText.match(pattern);
             if (match && match[0]) {
               const text = match[0].trim();
-              if (text.length >= 15 && text.length <= 200) {
+              if (text.length >= 15 && text.length <= 300) {
                 return text;
               }
             }
@@ -3437,8 +3891,8 @@
 
       const trimmed = text.trim();
 
-      // Length check
-      if (trimmed.length < 10 || trimmed.length > 500) return false;
+      // Length check - allow longer names
+      if (trimmed.length < 5 || trimmed.length > 500) return false;
 
       // Exclude patterns
       const excludePatterns = [
@@ -3446,17 +3900,17 @@
         /^welcome/i,
         /^please\s+login/i,
         /logout/i,
-        /submit/i,
-        /skip\s+task/i,
-        /release\s+task/i,
+        /^submit$/i,
+        /^skip\s+task$/i,
+        /^release\s+task$/i,
         /@.*\.com/i,
-        /customer\s+id/i,
-        /task\s+time/i,
-        /^\d+:\d+/,
-        /sagemaker/i,
-        /amazon/i,
-        /instructions?$/i,
-        /shortcuts?$/i
+        /^customer\s+id/i,
+        /^task\s+time/i,
+        /^\d+:\d+$/,
+        /^sagemaker$/i,
+        /^amazon$/i,
+        /^instructions?$/i,
+        /^shortcuts?$/i
       ];
 
       for (const pattern of excludePatterns) {
@@ -3477,7 +3931,7 @@
       if (!forceRefresh && cachedNames[taskId] && this.isValidTaskName(cachedNames[taskId])) {
         this.currentTaskId = taskId;
         this.detectedName = cachedNames[taskId];
-        log(`📝 Using cached task name: ${this.detectedName.substring(0, 50)}...`);
+        log(`📝 Using cached task name: ${this.detectedName}`);
         return this.detectedName;
       }
 
@@ -3502,7 +3956,7 @@
             if (result && this.isValidTaskName(result)) {
               this.detectedName = result;
               this.cacheTaskName(taskId, result);
-              log(`✅ Task name detected via ${method.name}: ${result.substring(0, 50)}...`);
+              log(`✅ Task name detected via ${method.name}: ${result}`);
               return result;
             }
           } catch (e) {
@@ -3538,8 +3992,8 @@
       const urlParts = window.location.pathname.split('/').filter(p => p && p.length > 3);
       if (urlParts.length > 0) {
         const lastPart = urlParts[urlParts.length - 1];
-        if (lastPart.length > 5 && lastPart.length < 50) {
-          return `Task: ${lastPart.substring(0, 20)} (${timestamp})`;
+        if (lastPart.length > 5 && lastPart.length < 100) {
+          return lastPart;
         }
       }
 
@@ -3551,10 +4005,10 @@
         const cachedNames = retrieve(KEYS.TASK_NAMES_CACHE, {});
         cachedNames[taskId] = taskName;
 
-        // Keep only last 200 task names
+        // Keep only last 500 task names
         const keys = Object.keys(cachedNames);
-        if (keys.length > 200) {
-          keys.slice(0, keys.length - 200).forEach(key => delete cachedNames[key]);
+        if (keys.length > 500) {
+          keys.slice(0, keys.length - 500).forEach(key => delete cachedNames[key]);
         }
 
         store(KEYS.TASK_NAMES_CACHE, cachedNames);
@@ -3588,6 +4042,12 @@
             }
           }
         }, 500);
+      });
+
+      this.observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true
       });
 
       this.observer.observe(document.body, {
@@ -3693,7 +4153,7 @@
     const taskType = TaskTypeDetector.detect();
     TaskTypeDetector.cache(id, taskType);
 
-    // Start task name detection
+    // Start task name detection - FULL NAME
     const taskName = await TaskNameDetector.detect(id);
 
     activeTask = {
@@ -3725,12 +4185,12 @@
         }
 
         updateDisplay();
-        log(`📝 Task name updated: ${newName.substring(0, 50)}...`);
+        log(`📝 Task name updated: ${newName}`);
       }
     });
 
-    // Increment total today hits
-    incrementTodayHits();
+    // Increment total today hits - PERMANENT (not affected by manual reset)
+    incrementPermanentDailyHits();
 
     log(`✅ New task started: ${taskName}`);
     return activeTask;
@@ -3784,26 +4244,58 @@
   }
 
   // ============================================================================
-  // 📊 TODAY HITS COUNTER (Unaffected by manual reset)
+  // 📊 PERMANENT DAILY HITS COUNTER - NOT AFFECTED BY MANUAL RESET
   // ============================================================================
-  function incrementTodayHits() {
+  function incrementPermanentDailyHits() {
     const today = todayStr();
-    const hitsData = retrieve(KEYS.TOTAL_TODAY_HITS, {});
+    const hitsData = retrieve(KEYS.PERMANENT_DAILY_HITS, {});
 
     if (!hitsData[today]) {
       hitsData[today] = 0;
     }
 
     hitsData[today]++;
-    store(KEYS.TOTAL_TODAY_HITS, hitsData);
+    store(KEYS.PERMANENT_DAILY_HITS, hitsData);
 
-    log(`📊 Today's total hits: ${hitsData[today]}`);
+    log(`📊 Permanent daily hits: ${hitsData[today]}`);
   }
 
-  function getTodayHits() {
+  function getPermanentDailyHits() {
     const today = todayStr();
-    const hitsData = retrieve(KEYS.TOTAL_TODAY_HITS, {});
+    const hitsData = retrieve(KEYS.PERMANENT_DAILY_HITS, {});
     return hitsData[today] || 0;
+  }
+
+  // Clean up old hits data (keep only last 30 days)
+  function cleanupOldHitsData() {
+    const hitsData = retrieve(KEYS.PERMANENT_DAILY_HITS, {});
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 30);
+    const cutoffStr = cutoffDate.toISOString().split('T')[0];
+
+    let cleaned = false;
+    Object.keys(hitsData).forEach(date => {
+      if (date < cutoffStr) {
+        delete hitsData[date];
+        cleaned = true;
+      }
+    });
+
+    if (cleaned) {
+      store(KEYS.PERMANENT_DAILY_HITS, hitsData);
+    }
+  }
+
+  // Run cleanup on startup
+  cleanupOldHitsData();
+
+  // Legacy compatibility
+  function getTodayHits() {
+    return getPermanentDailyHits();
+  }
+
+  function incrementTodayHits() {
+    incrementPermanentDailyHits();
   }
 
   // ============================================================================
@@ -3815,8 +4307,8 @@
       return 0;
     }
 
-    if (isResetting) {
-      log("⚠️ Reset in progress");
+    if (isResetting || forceResetActive || resetInProgress || manualResetJustHappened) {
+      log("⚠️ Reset in progress, skipping commit");
       return 0;
     }
 
@@ -3867,9 +4359,13 @@
       const allTimeCommits = retrieveNumber(KEYS.TOTAL_COMMITS_ALLTIME, 0);
       store(KEYS.TOTAL_COMMITS_ALLTIME, allTimeCommits + 1);
 
+      // Add to permanent task commits tracker
+      const taskName = activeTask.taskName || getTaskName();
+      PermanentTaskCommits.addCommit(taskName, finalElapsed);
+
       pushSessionRecord({
         id: activeTask.id,
-        taskName: activeTask.taskName || getTaskName(),
+        taskName: taskName,
         taskType: activeTask.taskType,
         date: new Date().toISOString(),
         duration: finalElapsed,
@@ -3963,25 +4459,29 @@
   }
 
   // ============================================================================
-  // 📅 DAILY RESET
+  // 📅 DAILY RESET - MIDNIGHT ONLY
   // ============================================================================
   function checkDailyReset() {
-    if (isResetting) {
+    if (isResetting || forceResetActive || resetInProgress || manualResetJustHappened) {
       return retrieveNumber(KEYS.DAILY_COMMITTED, 0);
     }
 
     const currentDate = todayStr();
     const lastDate = retrieve(KEYS.LAST_DATE);
 
+    // Clear manual reset tracker for new day
+    ManualResetTracker.clearForNewDay();
+
     if (lastDate !== currentDate) {
-      log("🌅 New day - resetting");
+      log("🌅 New day - midnight reset");
       const previousTotal = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
 
       if (previousTotal > 0 && lastDate) {
         saveToHistory(lastDate, previousTotal);
       }
 
-      performReset("both", "auto");
+      // Midnight reset - automatic, saves data
+      performMidnightReset();
 
       DelayAccumulator.reset();
 
@@ -4010,427 +4510,207 @@
   }
 
   // ============================================================================
-  // 🔧 MANUAL RESET - COMPLETELY FIXED
+  // 🔧 MIDNIGHT RESET - AUTOMATIC (SAVES DATA TO HISTORY)
   // ============================================================================
-  function performReset(resetType = 'both', source = 'manual') {
-    if (isResetting) {
-      log("⚠️ Reset already in progress");
-      return false;
+  function performMidnightReset() {
+    log("🕛 Performing midnight reset");
+
+    // Save current data to history before resetting
+    const currentDate = retrieve(KEYS.LAST_DATE);
+    const currentCommitted = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
+
+    if (currentDate && currentCommitted > 0) {
+      saveToHistory(currentDate, currentCommitted);
     }
 
-    isResetting = true;
+    // Reset daily values
+    forceStore(KEYS.DAILY_COMMITTED, 0);
+    forceStore(KEYS.COUNT, 0);
 
-    try {
-      log(`🔄 RESET INITIATED: Type=${resetType}, Source=${source}`);
+    // Update date
+    store(KEYS.LAST_DATE, todayStr());
+    store(KEYS.LAST_RESET, new Date().toISOString());
 
-      // For manual reset - FORCE clear without any commits
-      if (source === 'manual') {
-        // Clear active task immediately
-        TaskNameDetector.cleanup();
-        activeTask = null;
-        store(KEYS.ACTIVE_TASK, null);
+    // Clear active task
+    TaskNameDetector.cleanup();
+    activeTask = null;
+    store(KEYS.ACTIVE_TASK, null);
 
-        // Force clear values based on type
+    // Reset delay accumulator
+    DelayAccumulator.reset();
+
+    // Reset session start
+    store(KEYS.SESSION_START, Date.now());
+
+    // Clear manual reset tracker for new day
+    store(KEYS.MANUAL_RESET_TODAY, {});
+    store(KEYS.LAST_MANUAL_RESET_TIME, null);
+
+    // Update displays
+    updateDisplay();
+    updateHomeDisplay();
+    updateTopBanner();
+
+    log("✅ Midnight reset complete");
+  }
+
+  // ============================================================================
+  // 🔧 MANUAL RESET - PERFECT IMPLEMENTATION (NO DATA SAVE)
+  // ============================================================================
+  function performManualReset(resetType = 'both') {
+    return new Promise((resolve) => {
+      log(`🔄 MANUAL RESET INITIATED: Type=${resetType}`);
+
+      // Set all protection flags
+      forceResetActive = true;
+      resetInProgress = true;
+      isResetting = true;
+      manualResetJustHappened = true;
+
+      // Pause Smart Engine
+      if (window.SmartEngine) {
+        SmartEngine.pause();
+      }
+
+      // Clear active task FIRST
+      TaskNameDetector.cleanup();
+      activeTask = null;
+
+      try {
+        // Step 1: Remove keys completely from localStorage
         if (resetType === 'timer' || resetType === 'both') {
-          // Force write 0 to localStorage
-          localStorage.setItem(KEYS.DAILY_COMMITTED, JSON.stringify(0));
-          log("✅ Timer FORCE reset to 0");
+          localStorage.removeItem(KEYS.DAILY_COMMITTED);
         }
 
         if (resetType === 'counter' || resetType === 'both') {
-          // Force write 0 to localStorage
-          localStorage.setItem(KEYS.COUNT, JSON.stringify(0));
-          log("✅ Counter FORCE reset to 0");
+          localStorage.removeItem(KEYS.COUNT);
         }
 
+        // Step 2: Force write zeros with direct localStorage access
+        if (resetType === 'timer' || resetType === 'both') {
+          localStorage.setItem(KEYS.DAILY_COMMITTED, '0');
+        }
+
+        if (resetType === 'counter' || resetType === 'both') {
+          localStorage.setItem(KEYS.COUNT, '0');
+        }
+
+        // Step 3: Verify the write
+        let verified = true;
+        if (resetType === 'timer' || resetType === 'both') {
+          const checkTimer = localStorage.getItem(KEYS.DAILY_COMMITTED);
+          if (checkTimer !== '0') {
+            console.error('[SM] Timer reset verification FAILED, forcing again');
+            localStorage.setItem(KEYS.DAILY_COMMITTED, '0');
+            verified = false;
+          }
+        }
+
+        if (resetType === 'counter' || resetType === 'both') {
+          const checkCount = localStorage.getItem(KEYS.COUNT);
+          if (checkCount !== '0') {
+            console.error('[SM] Counter reset verification FAILED, forcing again');
+            localStorage.setItem(KEYS.COUNT, '0');
+            verified = false;
+          }
+        }
+
+        // Step 4: Clear active task storage
+        localStorage.removeItem(KEYS.ACTIVE_TASK);
+        localStorage.setItem(KEYS.ACTIVE_TASK, 'null');
+
+        // Step 5: Reset delay accumulator if both
         if (resetType === 'both') {
           DelayAccumulator.reset();
         }
 
-        // Update date tracking
+        // Step 6: Update date and reset log
         store(KEYS.LAST_DATE, todayStr());
         store(KEYS.LAST_RESET, new Date().toISOString());
 
-        // Force UI update
+        // Step 7: Record the manual reset time - THIS IS CRITICAL
+        ManualResetTracker.setResetTime();
+
+        // Log the reset
+        const resetLog = retrieve(KEYS.RESET_LOG, []);
+        resetLog.unshift({
+          type: resetType,
+          timestamp: new Date().toISOString(),
+          verified: verified,
+          manualResetTime: Date.now()
+        });
+        if (resetLog.length > 50) resetLog.length = 50;
+        store(KEYS.RESET_LOG, resetLog);
+
+        // Broadcast reset to other tabs
+        store(KEYS.FORCE_RESET_FLAG, {
+          type: resetType,
+          timestamp: Date.now()
+        });
+
+        log(`✅ MANUAL RESET VERIFIED: Timer=${localStorage.getItem(KEYS.DAILY_COMMITTED)}, Count=${localStorage.getItem(KEYS.COUNT)}`);
+        log(`📌 Manual reset time recorded for Smart Engine bypass`);
+
+        // Step 8: Force UI update after a small delay
         setTimeout(() => {
           updateDisplay();
           updateHomeDisplay();
           updateTopBanner();
-        }, 50);
 
-        log(`✅ MANUAL RESET COMPLETE: ${resetType}`);
-        return true;
-      }
+          // Resume Smart Engine after delay (but it will skip self-healing for today)
+          setTimeout(() => {
+            if (window.SmartEngine) {
+              SmartEngine.resume();
+            }
+          }, 1000);
 
-      // AUTO reset logic (midnight, etc.)
-      if (activeTask && activeTask.awsCurrent > 0) {
-        const snapshot = activeTask.awsCurrent || 0;
+          // Clear protection flags after extended delay
+          setTimeout(() => {
+            forceResetActive = false;
+            resetInProgress = false;
+            isResetting = false;
+            log("🔓 Reset protection flags cleared");
 
-        const committed = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
-        const newCommitted = committed + snapshot;
-        store(KEYS.DAILY_COMMITTED, newCommitted);
+            // Keep manualResetJustHappened active for longer to prevent immediate self-healing
+            setTimeout(() => {
+              manualResetJustHappened = false;
+              log("🔓 Manual reset just happened flag cleared");
+            }, MANUAL_RESET_PROTECTION_DURATION);
 
-        const count = retrieveNumber(KEYS.COUNT, 0);
-        const newCount = count + 1;
-        store(KEYS.COUNT, newCount);
+            resolve(true);
+          }, 1000);
+        }, 100);
 
-        const allTimeCommits = retrieveNumber(KEYS.TOTAL_COMMITS_ALLTIME, 0);
-        store(KEYS.TOTAL_COMMITS_ALLTIME, allTimeCommits + 1);
+      } catch (e) {
+        console.error("❌ Manual reset error:", e);
 
-        pushSessionRecord({
-          id: activeTask.id,
-          taskName: activeTask.taskName || getTaskName(),
-          date: new Date().toISOString(),
-          duration: snapshot,
-          action: 'auto_reset_' + resetType
-        });
-
-        if (CONFIG.ENABLE_ANALYTICS) {
-          updateAnalytics('task_completed', { duration: snapshot });
+        // Emergency fallback
+        try {
+          localStorage.setItem(KEYS.DAILY_COMMITTED, '0');
+          localStorage.setItem(KEYS.COUNT, '0');
+          ManualResetTracker.setResetTime();
+        } catch (e2) {
+          console.error("❌ Emergency reset also failed:", e2);
         }
+
+        forceResetActive = false;
+        resetInProgress = false;
+        isResetting = false;
+        manualResetJustHappened = false;
+        resolve(false);
       }
-
-      // Clear after saving
-      switch (resetType) {
-        case 'timer':
-          store(KEYS.DAILY_COMMITTED, 0);
-          break;
-        case 'counter':
-          store(KEYS.COUNT, 0);
-          break;
-        case 'both':
-        default:
-          store(KEYS.DAILY_COMMITTED, 0);
-          store(KEYS.COUNT, 0);
-          DelayAccumulator.reset();
-          break;
-      }
-
-      TaskNameDetector.cleanup();
-      activeTask = null;
-      store(KEYS.ACTIVE_TASK, null);
-
-      store(KEYS.LAST_DATE, todayStr());
-      store(KEYS.LAST_RESET, new Date().toISOString());
-      store(KEYS.SESSION_START, Date.now());
-
-      updateDisplay();
-      updateHomeDisplay();
-      updateTopBanner();
-
-      log(`✅ AUTO RESET COMPLETE: ${resetType}`);
-      return true;
-
-    } catch (e) {
-      console.error("❌ Reset error:", e);
-      if (window.SmartEngine) SmartEngine.handleError(e, 'reset');
-      return false;
-    } finally {
-      isResetting = false;
-    }
+    });
   }
 
-  // ============================================================================
-  // 🎨 RESET DIALOG
-  // ============================================================================
-  function showResetDialog() {
-    requestAnimationFrame(() => {
-      const existing = document.getElementById("sm-reset-dialog");
-      if (existing) existing.remove();
-
-            const currentTimer = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
-      const currentCount = retrieveNumber(KEYS.COUNT, 0);
-
-      const dialog = document.createElement("div");
-      dialog.id = "sm-reset-dialog";
-      dialog.innerHTML = `
-        <style>
-          #sm-reset-dialog {
-            position: fixed;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 99999999;
-            font-family: 'Inter', sans-serif;
-            animation: fadeIn 0.15s ease;
-          }
-          @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-          }
-          @keyframes slideUp {
-            from { transform: translateY(-10px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-          }
-          #sm-reset-backdrop {
-            position: absolute;
-            inset: 0;
-            background: rgba(0,0,0,0.7);
-            backdrop-filter: blur(20px);
-          }
-          #sm-reset-modal {
-            position: relative;
-            width: 380px;
-            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(239, 68, 68, 0.3);
-            overflow: hidden;
-            animation: slideUp 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-          }
-          #sm-reset-modal .header {
-            padding: 20px 24px;
-            background: linear-gradient(135deg, #dc2626, #ef4444);
-          }
-          #sm-reset-modal h3 {
-            margin: 0;
-            font-size: 20px;
-            font-weight: 900;
-            color: white;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-          }
-          #sm-reset-modal .body {
-            padding: 24px;
-          }
-          #sm-reset-modal .current-values {
-            background: rgba(15,23,42,0.8);
-            padding: 16px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: space-around;
-            gap: 16px;
-            border: 1px solid rgba(239, 68, 68, 0.2);
-          }
-          #sm-reset-modal .value {
-            text-align: center;
-            flex: 1;
-          }
-          #sm-reset-modal .value-label {
-            font-size: 11px;
-            color: #94a3b8;
-            font-weight: 700;
-            text-transform: uppercase;
-            margin-bottom: 6px;
-            letter-spacing: 0.5px;
-          }
-          #sm-reset-modal .value strong {
-            display: block;
-            color: #f1f5f9;
-            font-weight: 900;
-            font-size: 24px;
-            font-variant-numeric: tabular-nums;
-          }
-          #sm-reset-modal .warning-box {
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.1) 100%);
-            border: 2px solid rgba(239, 68, 68, 0.4);
-            padding: 14px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-          }
-          #sm-reset-modal .warning-text {
-            font-size: 13px;
-            color: #fca5a5;
-            font-weight: 600;
-            line-height: 1.5;
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-          }
-          #sm-reset-modal .warning-icon {
-            font-size: 20px;
-            flex-shrink: 0;
-          }
-          #sm-reset-modal .options {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-          }
-          #sm-reset-modal .option-btn {
-            padding: 14px 18px;
-            border: 2px solid rgba(148,163,184,0.2);
-            border-radius: 12px;
-            background: rgba(30,41,59,0.6);
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-weight: 700;
-            color: #f1f5f9;
-          }
-          #sm-reset-modal .option-btn:hover {
-            border-color: #dc2626;
-            background: rgba(220, 38, 38, 0.15);
-            transform: translateX(6px);
-            box-shadow: 0 6px 20px rgba(220,38,38,0.3);
-          }
-          #sm-reset-modal .option-btn .icon {
-            font-size: 20px;
-          }
-          #sm-reset-modal .option-btn .text {
-            flex: 1;
-          }
-          #sm-reset-modal .option-btn .desc {
-            font-size: 11px;
-            color: #94a3b8;
-            font-weight: 500;
-            margin-top: 2px;
-          }
-          #sm-reset-modal .footer {
-            padding: 16px 24px;
-            background: rgba(15,23,42,0.8);
-            display: flex;
-            justify-content: flex-end;
-            border-top: 1px solid rgba(255,255,255,0.05);
-          }
-          #sm-reset-modal .cancel-btn {
-            padding: 12px 24px;
-            border: 2px solid rgba(148,163,184,0.4);
-            background: transparent;
-            border-radius: 10px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 700;
-            transition: all 0.3s;
-            color: #94a3b8;
-          }
-          #sm-reset-modal .cancel-btn:hover {
-            background: rgba(148,163,184,0.15);
-            border-color: #64748b;
-            color: #f1f5f9;
-          }
-        </style>
-
-        <div id="sm-reset-backdrop"></div>
-        <div id="sm-reset-modal">
-          <div class="header">
-            <h3>🔄 Reset Options</h3>
-          </div>
-          <div class="body">
-            <div class="current-values">
-              <div class="value">
-                <div class="value-label">⏱️ Current Timer</div>
-                <strong>${fmt(currentTimer)}</strong>
-              </div>
-              <div class="value">
-                <div class="value-label">📋 Current Count</div>
-                <strong>${currentCount}</strong>
-              </div>
-            </div>
-            <div class="warning-box">
-              <div class="warning-text">
-                <span class="warning-icon">⚠️</span>
-                <span>Manual reset will immediately set values to 0. This action cannot be undone. Current data will NOT be saved to history.</span>
-              </div>
-            </div>
-            <div class="options">
-              <button class="option-btn" data-reset="timer">
-                <span class="icon">⏱️</span>
-                <div class="text">
-                  <div>Reset Timer Only</div>
-                  <div class="desc">Sets timer to 00:00:00</div>
-                </div>
-              </button>
-              <button class="option-btn" data-reset="counter">
-                <span class="icon">🔢</span>
-                <div class="text">
-                  <div>Reset Counter Only</div>
-                  <div class="desc">Sets task count to 0</div>
-                </div>
-              </button>
-              <button class="option-btn" data-reset="both">
-                <span class="icon">🔄</span>
-                <div class="text">
-                  <div>Reset Both</div>
-                  <div class="desc">Resets timer and counter to 0</div>
-                </div>
-              </button>
-            </div>
-          </div>
-          <div class="footer">
-            <button class="cancel-btn" id="reset-cancel">Cancel (ESC)</button>
-          </div>
-        </div>
-      `;
-
-      document.body.appendChild(dialog);
-
-      const escHandler = (e) => {
-        if (e.key === 'Escape') {
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-          dialog.remove();
-          document.removeEventListener('keydown', escHandler, true);
-        }
-      };
-
-      document.addEventListener('keydown', escHandler, true);
-
-      dialog.querySelector("#sm-reset-backdrop").addEventListener("click", () => {
-        dialog.remove();
-        document.removeEventListener('keydown', escHandler, true);
-      });
-
-      dialog.querySelector("#reset-cancel").addEventListener("click", () => {
-        dialog.remove();
-        document.removeEventListener('keydown', escHandler, true);
-      });
-
-      dialog.querySelectorAll(".option-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-          const resetType = btn.dataset.reset;
-          dialog.remove();
-          document.removeEventListener('keydown', escHandler, true);
-
-          // Execute reset
-          const success = performReset(resetType, "manual");
-
-          if (success) {
-            // Show confirmation
-            const toast = document.createElement('div');
-            toast.style.cssText = `
-              position: fixed;
-              top: 20px;
-              left: 50%;
-              transform: translateX(-50%);
-              background: linear-gradient(135deg, #10b981, #059669);
-              color: white;
-              padding: 14px 28px;
-              border-radius: 12px;
-              font-weight: 800;
-              font-size: 14px;
-              z-index: 9999999999;
-              box-shadow: 0 8px 32px rgba(16, 185, 129, 0.5);
-              animation: slideDown 0.3s ease;
-            `;
-            toast.innerHTML = `✅ Reset Complete! ${resetType === 'timer' ? 'Timer' : resetType === 'counter' ? 'Counter' : 'Timer & Counter'} set to 0`;
-
-            const style = document.createElement('style');
-            style.textContent = `
-              @keyframes slideDown {
-                from { transform: translateX(-50%) translateY(-20px); opacity: 0; }
-                to { transform: translateX(-50%) translateY(0); opacity: 1; }
-              }
-            `;
-            document.head.appendChild(style);
-            document.body.appendChild(toast);
-
-            setTimeout(() => {
-              toast.style.opacity = '0';
-              toast.style.transition = 'opacity 0.3s';
-              setTimeout(() => {
-                toast.remove();
-                style.remove();
-              }, 300);
-            }, 2500);
-          }
-        });
-      });
-    });
+  // Legacy performReset function - routes to appropriate reset type
+  function performReset(resetType = 'both', source = 'manual') {
+    if (source === 'manual') {
+      return performManualReset(resetType);
+    } else {
+      // Midnight/auto reset
+      performMidnightReset();
+      return Promise.resolve(true);
+    }
   }
 
   function getMsUntilMidnight() {
@@ -4445,16 +4725,18 @@
     const msUntilMidnight = getMsUntilMidnight();
     setTimeout(() => {
       log("🕛 Midnight reset");
-      performReset("both", "midnight");
+      performMidnightReset();
       scheduleMidnightReset();
     }, msUntilMidnight);
   }
 
   function backupMidnightCheck() {
+    if (forceResetActive || resetInProgress || manualResetJustHappened) return;
+
     const currentDate = todayStr();
     const lastDate = retrieve(KEYS.LAST_DATE);
     if (lastDate && lastDate !== currentDate) {
-      performReset("both", "midnight");
+      performMidnightReset();
     }
   }
 
@@ -4478,6 +4760,11 @@
             if (method.toUpperCase() === "POST" && response.ok && CONFIG.FIX_DETECTION) {
               const now = Date.now();
               if (now - lastSubmitDetection < SUBMIT_DEBOUNCE_MS) {
+                return response;
+              }
+
+              // Skip during reset
+              if (forceResetActive || resetInProgress || isResetting || manualResetJustHappened) {
                 return response;
               }
 
@@ -4522,6 +4809,11 @@
 
               const now = Date.now();
               if (now - lastSubmitDetection < SUBMIT_DEBOUNCE_MS) {
+                return;
+              }
+
+              // Skip during reset
+              if (forceResetActive || resetInProgress || isResetting || manualResetJustHappened) {
                 return;
               }
 
@@ -4570,6 +4862,12 @@
             if (now - lastSubmitDetection < SUBMIT_DEBOUNCE_MS) {
               return;
             }
+
+            // Skip during reset
+            if (forceResetActive || resetInProgress || isResetting || manualResetJustHappened) {
+              return;
+            }
+
             lastSubmitDetection = now;
 
             log("🖱️ Submit clicked");
@@ -4582,6 +4880,7 @@
         if (raw.includes("skip") && !el.__sm_skip_bound) {
           el.__sm_skip_bound = true;
           el.addEventListener("click", () => {
+            if (forceResetActive || resetInProgress || manualResetJustHappened) return;
             log("🖱️ Skip");
             discardActiveTask("skipped");
             updateDisplay();
@@ -4592,6 +4891,7 @@
         if ((raw.includes("stop") || raw.includes("release")) && !el.__sm_release_bound) {
           el.__sm_release_bound = true;
           el.addEventListener("click", () => {
+            if (forceResetActive || resetInProgress || manualResetJustHappened) return;
             log("🖱️ Release");
             discardActiveTask("released");
             updateDisplay();
@@ -4673,174 +4973,189 @@
   });
 
   // ============================================================================
-  // 🏠 HOME PAGE STATS
+  // 🏠 HOME PAGE STATS - THEME AWARE
   // ============================================================================
   const homeDisplay = document.createElement("div");
   homeDisplay.id = "sm-home-stats";
-  homeDisplay.style.cssText = `
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    z-index: 999999;
-    display: block;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    user-select: none;
-    opacity: 1;
-    pointer-events: auto;
-    visibility: visible;
-    transition: opacity 0.15s ease-in-out;
+  homeDisplay.setAttribute('data-theme', ThemeManager.getTheme());
+
+  function updateHomeDisplayStyles() {
+    const theme = ThemeManager.getTheme();
+    const colors = ThemeManager.getThemeColors();
+
+    homeDisplay.style.cssText = `
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 999999;
+      display: block;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      user-select: none;
+      opacity: 1;
+      pointer-events: auto;
+      visibility: visible;
+      transition: opacity 0.15s ease-in-out;
+    `;
+
+    homeDisplay.innerHTML = `
+    <style>
+      @keyframes float-gentle {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-5px); }
+      }
+      @keyframes glow-pulse {
+        0%, 100% { box-shadow: 0 8px 30px rgba(99, 102, 241, 0.3); }
+        50% { box-shadow: 0 12px 40px rgba(99, 102, 241, 0.5); }
+      }
+      @keyframes shimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+      }
+      .home-stats-container {
+        background: ${theme === 'light' ? 'linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.98) 100%)' : 'linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%)'};
+        backdrop-filter: blur(20px) saturate(180%);
+        -webkit-backdrop-filter: blur(20px) saturate(180%);
+        border: 2px solid ${theme === 'light' ? 'rgba(99, 102, 241, 0.4)' : 'rgba(99, 102, 241, 0.3)'};
+        border-radius: 16px;
+        padding: 16px;
+        width: 180px;
+        animation: float-gentle 3s ease-in-out infinite, glow-pulse 2s ease-in-out infinite;
+        cursor: pointer;
+        transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        position: relative;
+        overflow: hidden;
+      }
+      .home-stats-container::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 50%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.15), transparent);
+        animation: shimmer 3s infinite;
+      }
+      .home-stats-container:hover {
+        transform: translateY(-6px) scale(1.05);
+        box-shadow: 0 16px 50px rgba(99, 102, 241, 0.6);
+        border-color: #6366f1;
+      }
+      .home-stats-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid ${theme === 'light' ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.3)'};
+        position: relative;
+        z-index: 1;
+      }
+      .home-stats-title {
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: #a78bfa;
+      }
+      .home-stats-badge {
+        padding: 3px 8px;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        color: white;
+        border-radius: 10px;
+        font-size: 9px;
+        font-weight: 800;
+        text-transform: uppercase;
+        animation: pulse 2s infinite;
+        box-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.9; transform: scale(1.05); }
+      }
+      .home-stat-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+        position: relative;
+        z-index: 1;
+        padding: 6px;
+        border-radius: 8px;
+        transition: all 0.2s;
+      }
+      .home-stat-row:hover {
+        background: rgba(99, 102, 241, 0.1);
+      }
+      .home-stat-row:last-child {
+        margin-bottom: 0;
+      }
+      .home-stat-label {
+        font-size: 11px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: ${colors.textSecondary};
+      }
+      .home-stat-icon {
+        font-size: 16px;
+      }
+      .home-stat-value {
+        font-size: 16px;
+        font-weight: 900;
+        font-family: 'Inter', system-ui;
+        font-variant-numeric: tabular-nums;
+        color: ${colors.textPrimary};
+        text-shadow: 0 0 15px rgba(99, 102, 241, 0.6);
+      }
+      .home-stats-footer {
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid ${theme === 'light' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.2)'};
+        text-align: center;
+        font-size: 9px;
+        font-weight: 700;
+        position: relative;
+        z-index: 1;
+        color: #a78bfa;
+      }
+    </style>
+
+    <div class="home-stats-container">
+      <div class="home-stats-header">
+        <div class="home-stats-title">⚡ Tracker</div>
+        <div class="home-stats-badge">LIVE</div>
+      </div>
+      <div class="home-stat-row">
+        <div class="home-stat-label">
+          <span class="home-stat-icon">⏱️</span>
+          <span>Time</span>
+        </div>
+        <div class="home-stat-value" id="home-timer-value">00:00:00</div>
+      </div>
+      <div class="home-stat-row">
+        <div class="home-stat-label">
+          <span class="home-stat-icon">📋</span>
+          <span>Tasks</span>
+        </div>
+        <div class="home-stat-value" id="home-count-value">0</div>
+      </div>
+      <div class="home-stats-footer">
+        Click to open Dashboard
+      </div>
+    </div>
   `;
+  }
 
-  homeDisplay.innerHTML = `
-  <style>
-    @keyframes float-gentle {
-      0%, 100% { transform: translateY(0px); }
-      50% { transform: translateY(-5px); }
-    }
-    @keyframes glow-pulse {
-      0%, 100% { box-shadow: 0 8px 30px rgba(99, 102, 241, 0.3); }
-      50% { box-shadow: 0 12px 40px rgba(99, 102, 241, 0.5); }
-    }
-    @keyframes shimmer {
-      0% { transform: translateX(-100%); }
-      100% { transform: translateX(100%); }
-    }
-    .home-stats-container {
-      background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%);
-      backdrop-filter: blur(20px) saturate(180%);
-      -webkit-backdrop-filter: blur(20px) saturate(180%);
-      border: 2px solid rgba(99, 102, 241, 0.3);
-      border-radius: 16px;
-      padding: 16px;
-      width: 180px;
-      animation: float-gentle 3s ease-in-out infinite, glow-pulse 2s ease-in-out infinite;
-      cursor: pointer;
-      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-      position: relative;
-      overflow: hidden;
-    }
-    .home-stats-container::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: -100%;
-      width: 50%;
-      height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.15), transparent);
-      animation: shimmer 3s infinite;
-    }
-    .home-stats-container:hover {
-      transform: translateY(-6px) scale(1.05);
-      box-shadow: 0 16px 50px rgba(99, 102, 241, 0.6);
-      border-color: #6366f1;
-    }
-    .home-stats-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 12px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid rgba(99, 102, 241, 0.3);
-      position: relative;
-      z-index: 1;
-    }
-    .home-stats-title {
-      font-size: 13px;
-      font-weight: 800;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      color: #a78bfa;
-    }
-    .home-stats-badge {
-      padding: 3px 8px;
-      background: linear-gradient(135deg, #6366f1, #8b5cf6);
-      color: white;
-      border-radius: 10px;
-      font-size: 9px;
-      font-weight: 800;
-      text-transform: uppercase;
-      animation: pulse 2s infinite;
-      box-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.9; transform: scale(1.05); }
-    }
-    .home-stat-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 10px;
-      position: relative;
-      z-index: 1;
-      padding: 6px;
-      border-radius: 8px;
-      transition: all 0.2s;
-    }
-    .home-stat-row:hover {
-      background: rgba(99, 102, 241, 0.1);
-    }
-    .home-stat-row:last-child {
-      margin-bottom: 0;
-    }
-    .home-stat-label {
-      font-size: 11px;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      color: #cbd5e1;
-    }
-    .home-stat-icon {
-      font-size: 16px;
-    }
-    .home-stat-value {
-      font-size: 16px;
-      font-weight: 900;
-      font-family: 'Inter', system-ui;
-      font-variant-numeric: tabular-nums;
-      color: #ffffff;
-      text-shadow: 0 0 15px rgba(99, 102, 241, 0.6);
-    }
-    .home-stats-footer {
-      margin-top: 10px;
-      padding-top: 8px;
-      border-top: 1px solid rgba(99, 102, 241, 0.2);
-      text-align: center;
-      font-size: 9px;
-      font-weight: 700;
-      position: relative;
-      z-index: 1;
-      color: #a78bfa;
-    }
-  </style>
-
-  <div class="home-stats-container">
-    <div class="home-stats-header">
-      <div class="home-stats-title">⚡ Tracker</div>
-      <div class="home-stats-badge">LIVE</div>
-    </div>
-    <div class="home-stat-row">
-      <div class="home-stat-label">
-        <span class="home-stat-icon">⏱️</span>
-        <span>Time</span>
-      </div>
-      <div class="home-stat-value" id="home-timer-value">00:00:00</div>
-    </div>
-    <div class="home-stat-row">
-      <div class="home-stat-label">
-        <span class="home-stat-icon">📋</span>
-        <span>Tasks</span>
-      </div>
-      <div class="home-stat-value" id="home-count-value">0</div>
-    </div>
-    <div class="home-stats-footer">
-      Click to open Dashboard
-    </div>
-  </div>
-`;
-
+  // Initialize home display
+  updateHomeDisplayStyles();
   document.body.appendChild(homeDisplay);
+
+  // Listen for theme changes
+  ThemeManager.addListener((theme) => {
+    updateHomeDisplayStyles();
+    updateHomeDisplay();
+  });
 
   homeDisplay.onclick = function(e) {
     e.preventDefault();
@@ -4855,8 +5170,23 @@
   };
 
   function updateHomeDisplay() {
-    const committed = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
-    const count = retrieveNumber(KEYS.COUNT, 0);
+    let committed, count;
+
+    // Read directly during/after reset
+    if (forceResetActive || resetInProgress || manualResetJustHappened) {
+      try {
+        const rawCommitted = localStorage.getItem(KEYS.DAILY_COMMITTED);
+        const rawCount = localStorage.getItem(KEYS.COUNT);
+        committed = rawCommitted ? parseInt(rawCommitted) : 0;
+        count = rawCount ? parseInt(rawCount) : 0;
+      } catch (e) {
+        committed = 0;
+        count = 0;
+      }
+    } else {
+      committed = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
+      count = retrieveNumber(KEYS.COUNT, 0);
+    }
 
     const timerEl = document.getElementById('home-timer-value');
     const countEl = document.getElementById('home-count-value');
@@ -4872,8 +5202,23 @@
     const bannerEl = document.getElementById('sm-top-banner');
     if (!bannerEl) return;
 
-    const committed = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
-    const count = retrieveNumber(KEYS.COUNT, 0);
+    let committed, count;
+
+    // Read directly during/after reset
+    if (forceResetActive || resetInProgress || manualResetJustHappened) {
+      try {
+        const rawCommitted = localStorage.getItem(KEYS.DAILY_COMMITTED);
+        const rawCount = localStorage.getItem(KEYS.COUNT);
+        committed = rawCommitted ? parseInt(rawCommitted) : 0;
+        count = rawCount ? parseInt(rawCount) : 0;
+      } catch (e) {
+        committed = 0;
+        count = 0;
+      }
+    } else {
+      committed = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
+      count = retrieveNumber(KEYS.COUNT, 0);
+    }
 
     const timeEl = bannerEl.querySelector('#banner-time');
     const countEl = bannerEl.querySelector('#banner-count');
@@ -5029,24 +5374,30 @@
   }
 
   // ============================================================================
-  // 🎨 TASK PAGE DISPLAY
+  // 🎨 TASK PAGE DISPLAY - FIXED POSITIONING
   // ============================================================================
   const display = document.createElement("div");
   display.id = "sm-utilization";
+
+  // Use fixed positioning for reliability
   display.style.cssText = `
-    position: absolute;
+    position: fixed;
     left: 12px;
-    top: 50%;
-    transform: translateY(-50%);
+    bottom: 10px;
     display: flex;
     align-items: center;
     gap: 12px;
-    z-index: 50;
+    z-index: 999999;
     pointer-events: auto;
     user-select: none;
     opacity: 1;
     visibility: visible;
     transition: opacity 0.15s ease-in-out, all 0.3s ease;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
   `;
 
   display.innerHTML = `
@@ -5055,9 +5406,7 @@
         font-family: 'Inter', system-ui;
         font-variant-numeric: tabular-nums;
         font-size: 14px;
-        font-weight: 400;
-        color: inherit;
-        opacity: 0.92;
+        font-weight: 500;
       }
       .sm-stat-group {
         display: inline-flex;
@@ -5076,20 +5425,25 @@
       }
       #sm-utilization.compact-mode .sm-stat-text {
         font-size: 14px !important;
-        font-weight: 400;
+        font-weight: 500;
         letter-spacing: 0.1px;
         line-height: 1;
       }
       #sm-utilization.compact-mode #sm-count-label {
         margin-left: 4px;
       }
+
+      /* TEXT COLOR - DARK FOR VISIBILITY */
       .sm-stat-text {
         white-space: nowrap;
         line-height: 1.2;
         display: block;
         transition: all 0.3s ease;
-        font-weight: 400;
+        font-weight: 600;
+        color: #1a1a1a !important;  /* DARK TEXT */
+        text-shadow: 0 0 2px rgba(255,255,255,0.8); /* Subtle outline for any background */
       }
+
       .sm-thin-progress {
         width: 100%;
         height: 3px;
@@ -5179,7 +5533,7 @@
         box-shadow: none !important;
       }
       .icon-square.dark {
-        background: #2d3748;
+        background: #374151;
         border-radius: 3px;
       }
       .icon-square.orange {
@@ -5251,55 +5605,165 @@
     </button>
   `;
 
+  // ============================================================================
+  // 🔧 FIXED attachToFooter FUNCTION
+  // ============================================================================
   function attachToFooter() {
     if (!isTaskPage()) return;
 
-    const footer = document.querySelector('.cswui-footer, .awsui-footer, footer') || document.body;
-    if (!footer) return;
+    // Extended list of footer selectors
+    const footerSelectors = [
+      '.cswui-footer',
+      '.awsui-footer',
+      'footer',
+      '[class*="footer"]',
+      '.task-footer',
+      '.labeling-footer',
+      '[data-testid="footer"]',
+      '.bottom-bar',
+      '.action-bar'
+    ];
 
-    if (!footer.contains(display)) {
-      footer.appendChild(display);
-
-      setTimeout(() => {
-        const dashBtn = document.getElementById('sm-dashboard-btn');
-        if (dashBtn && !dashBtn.onclick) {
-          dashBtn.onclick = function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            log("📊 Dashboard clicked");
-            try {
-              showDashboard();
-            } catch (error) {
-              console.error("Dashboard error:", error);
-              alert("Dashboard error: " + error.message);
-            }
-          };
-        }
-      }, 50);
+    let footer = null;
+    for (const selector of footerSelectors) {
+      const el = document.querySelector(selector);
+      if (el && el.offsetHeight > 0) {
+        footer = el;
+        break;
+      }
     }
 
-    log("✅ Display attached to footer");
+    // Remove display from current parent first
+    if (display.parentElement) {
+      display.parentElement.removeChild(display);
+    }
+
+    if (footer) {
+      // Found a footer - use absolute positioning within it
+      display.style.position = 'absolute';
+      display.style.left = '12px';
+      display.style.top = '50%';
+      display.style.bottom = 'auto';
+      display.style.transform = 'translateY(-50%)';
+      display.style.background = 'transparent';
+      display.style.backdropFilter = 'none';
+      display.style.padding = '0';
+      display.style.border = 'none';
+      display.style.boxShadow = 'none';
+      display.style.borderRadius = '0';
+      display.style.zIndex = '50';
+
+      // Ensure footer has relative positioning
+      const footerPosition = window.getComputedStyle(footer).position;
+      if (footerPosition === 'static') {
+        footer.style.position = 'relative';
+      }
+
+      footer.appendChild(display);
+      log("✅ Display attached to footer element");
+    } else {
+      // No footer found - use fixed positioning at bottom of screen
+      display.style.position = 'fixed';
+      display.style.left = '12px';
+      display.style.bottom = '10px';
+      display.style.top = 'auto';
+      display.style.transform = 'none';
+      display.style.background = 'rgba(15, 23, 42, 0.95)';
+      display.style.backdropFilter = 'blur(10px)';
+      display.style.padding = '8px 14px';
+      display.style.border = '1px solid rgba(99, 102, 241, 0.3)';
+      display.style.boxShadow = '0 4px 15px rgba(0, 0, 0, 0.3)';
+      display.style.borderRadius = '10px';
+      display.style.zIndex = '999999';
+
+      document.body.appendChild(display);
+      log("⚠️ No footer found - using fixed positioning");
+    }
+
+    // Setup dashboard button click handler
+    setTimeout(() => {
+      const dashBtn = document.getElementById('sm-dashboard-btn');
+      if (dashBtn && !dashBtn.onclick) {
+        dashBtn.onclick = function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          log("📊 Dashboard clicked");
+          try {
+            showDashboard();
+          } catch (error) {
+            console.error("Dashboard error:", error);
+            alert("Dashboard error: " + error.message);
+          }
+        };
+      }
+    }, 50);
   }
 
-  let footerObserver = new MutationObserver(() => {
-    setTimeout(attachToFooter, 120);
+  // Improved footer observer with retry
+  let footerRetryCount = 0;
+  const MAX_FOOTER_RETRIES = 20;
+
+  function tryAttachToFooter() {
+    attachToFooter();
+
+    // Check if we're in fixed mode (no footer found)
+    if (display.style.position === 'fixed' && footerRetryCount < MAX_FOOTER_RETRIES) {
+      footerRetryCount++;
+      setTimeout(tryAttachToFooter, 500);
+    } else {
+      footerRetryCount = 0;
+    }
+  }
+
+  let footerObserver = new MutationObserver((mutations) => {
+    // Only re-attach if display is in fixed mode (not in footer)
+    if (display.style.position === 'fixed' && isTaskPage()) {
+      setTimeout(attachToFooter, 100);
+    }
   });
-  footerObserver.observe(document.body, { childList: true, subtree: true });
+
+  footerObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'style']
+  });
 
   // ============================================================================
   // 🎯 DISPLAY UPDATE
   // ============================================================================
   function updateDisplay() {
-    const committed = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
+    // Read directly from localStorage during/after reset
+    let committed, count;
+
+    if (forceResetActive || resetInProgress || manualResetJustHappened) {
+      // During reset, read directly from localStorage
+      try {
+        const rawCommitted = localStorage.getItem(KEYS.DAILY_COMMITTED);
+        const rawCount = localStorage.getItem(KEYS.COUNT);
+        committed = rawCommitted ? parseInt(rawCommitted) : 0;
+        count = rawCount ? parseInt(rawCount) : 0;
+
+        // Ensure we show 0 if values are invalid
+        if (isNaN(committed) || committed < 0) committed = 0;
+        if (isNaN(count) || count < 0) count = 0;
+      } catch (e) {
+        committed = 0;
+        count = 0;
+      }
+    } else {
+      committed = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
+      count = retrieveNumber(KEYS.COUNT, 0);
+    }
+
     let pending = 0;
 
-    if (activeTask && !isCommitting && !isResetting &&
+    if (activeTask && !isCommitting && !isResetting && !forceResetActive && !resetInProgress && !manualResetJustHappened &&
         (activeTask.status === "active" || activeTask.status === "paused")) {
       pending = typeof activeTask.awsCurrent === 'number' ? activeTask.awsCurrent : 0;
     }
 
     const total = committed + pending;
-    const count = retrieveNumber(KEYS.COUNT, 0);
 
     const timerText = document.getElementById('sm-timer-text');
     if (timerText) {
@@ -5360,7 +5824,10 @@
       }
     }
 
-    AchievementSystem.updateStreaks();
+    if (!forceResetActive && !resetInProgress && !manualResetJustHappened) {
+      AchievementSystem.updateStreaks();
+    }
+
     updateHomeDisplay();
     applyProgressBarVisibility();
   }
@@ -5371,18 +5838,47 @@
   function aggregateTodayTaskData() {
     const sessions = retrieve(KEYS.SESSIONS, []) || [];
     const today = todayStr();
+    const permanentTasks = PermanentTaskCommits.getAllTasks();
+
+    // Get the last manual reset time
+    const lastManualResetTime = ManualResetTracker.getLastResetTime();
 
     const todaySessions = sessions.filter(s => {
       const sessionDate = new Date(s.date).toISOString().split('T')[0];
-      return sessionDate === today;
+      if (sessionDate !== today) return false;
+
+      // If there was a manual reset today, only count sessions after that
+      if (lastManualResetTime) {
+        const sessionTime = new Date(s.date).getTime();
+        if (sessionTime < lastManualResetTime) {
+          return false;
+        }
+      }
+
+      return true;
     });
 
     const taskMap = new Map();
 
+    // First, populate with permanent commits data (not affected by manual reset)
+    Object.entries(permanentTasks).forEach(([taskName, data]) => {
+      taskMap.set(taskName, {
+        taskName: taskName,
+        totalTime: data.totalTime || 0,
+        totalSessions: data.commits || 0,
+        submitted: data.commits || 0,
+        skipped: 0,
+        expired: 0,
+        permanentCommits: data.commits || 0, // This never resets except at midnight
+      });
+    });
+
+    // Then update with session data for skipped/expired counts
     todaySessions.forEach(session => {
       const taskName = session.taskName || "Unknown Task";
 
       if (!taskMap.has(taskName)) {
+        const permData = PermanentTaskCommits.getTaskData(taskName);
         taskMap.set(taskName, {
           taskName: taskName,
           totalTime: 0,
@@ -5390,27 +5886,25 @@
           submitted: 0,
           skipped: 0,
           expired: 0,
+          permanentCommits: permData.commits || 0,
         });
       }
 
       const task = taskMap.get(taskName);
 
-      if (session.action === 'submitted' || session.action.includes('manual_reset')) {
-        task.totalTime += (session.duration || 0);
-        task.submitted++;
-      } else if (session.action === 'skipped') {
+      if (session.action === 'skipped') {
         task.skipped++;
+        task.totalSessions++;
       } else if (session.action === 'expired') {
         task.expired++;
+        task.totalSessions++;
       }
-
-      task.totalSessions++;
     });
 
     return Array.from(taskMap.values()).map(task => ({
       ...task,
       successRate: task.totalSessions > 0 ?
-        Math.round((task.submitted / task.totalSessions) * 100) : 0,
+        Math.round((task.submitted / task.totalSessions) * 100) : (task.submitted > 0 ? 100 : 0),
       avgDuration: task.submitted > 0 ? Math.round(task.totalTime / task.submitted) : 0
     }));
   }
@@ -5429,7 +5923,7 @@
 
       const daySessions = sessions.filter(s => {
         const sessionDate = new Date(s.date).toISOString().split('T')[0];
-        return sessionDate === dateStr && (s.action === 'submitted' || s.action.includes('manual_reset'));
+        return sessionDate === dateStr && (s.action === 'submitted' || s.action.includes('reset'));
       });
 
       last7Days.push({
@@ -5457,7 +5951,7 @@
 
       const daySessions = sessions.filter(s => {
         const sessionDate = new Date(s.date).toISOString().split('T')[0];
-        return sessionDate === dateStr && (s.action === 'submitted' || s.action.includes('manual_reset') || s.action.includes('auto_reset'));
+        return sessionDate === dateStr && (s.action === 'submitted' || s.action.includes('reset'));
       });
 
       last30Days.push({
@@ -5477,6 +5971,9 @@
     const sessions = retrieve(KEYS.SESSIONS, []) || [];
     const today = todayStr();
 
+    // Get the last manual reset time
+    const lastManualResetTime = ManualResetTracker.getLastResetTime();
+
     const hourlyData = Array(24).fill(0).map((_, hour) => ({
       hour,
       tasks: 0,
@@ -5488,7 +5985,16 @@
       const sessionDateStr = sessionDate.toISOString().split('T')[0];
 
       if (sessionDateStr === today &&
-          (session.action === 'submitted' || session.action.includes('manual_reset'))) {
+          (session.action === 'submitted' || session.action.includes('reset'))) {
+
+        // If there was a manual reset today, only count sessions after that
+        if (lastManualResetTime) {
+          const sessionTime = sessionDate.getTime();
+          if (sessionTime < lastManualResetTime) {
+            return;
+          }
+        }
+
         const hour = sessionDate.getHours();
         hourlyData[hour].tasks++;
         hourlyData[hour].time += (session.duration || 0);
@@ -5533,7 +6039,7 @@
     }
 
     const payload = {
-      version: "7.0-ULTIMATE",
+      version: "7.3-ULTIMATE",
       exported_at: new Date().toISOString(),
       date_range: dateRange || 'all',
       history: history,
@@ -5542,7 +6048,8 @@
       daily_committed: retrieveNumber(KEYS.DAILY_COMMITTED, 0),
       count: retrieveNumber(KEYS.COUNT, 0),
       total_commits_alltime: retrieveNumber(KEYS.TOTAL_COMMITS_ALLTIME, 0),
-      total_today_hits: getTodayHits(),
+      permanent_daily_hits: getPermanentDailyHits(),
+      permanent_task_commits: retrieve(KEYS.PERMANENT_TASK_COMMITS, {}),
       last_date: retrieve(KEYS.LAST_DATE),
       achievements: retrieve(KEYS.ACHIEVEMENTS, {}),
       streaks: retrieve(KEYS.STREAKS, {}),
@@ -5590,7 +6097,7 @@
       return [
         date.toLocaleDateString(),
         date.toLocaleTimeString(),
-        (s.taskName || 'Unknown').replace(/,/g, ';'),
+        `"${(s.taskName || 'Unknown').replace(/"/g, '""')}"`,
         s.duration || 0,
         fmt(s.duration || 0),
         s.action || 'unknown',
@@ -5649,6 +6156,7 @@
             if (data.delay_stats) DelayAccumulator.dailyStats = data.delay_stats;
             if (data.reminder_settings) store(KEYS.REMINDER_SETTINGS, data.reminder_settings);
             if (data.reminder_stats) store(KEYS.REMINDER_STATS, data.reminder_stats);
+            if (data.permanent_task_commits) store(KEYS.PERMANENT_TASK_COMMITS, data.permanent_task_commits);
           }
 
           if (document.getElementById('sm-dashboard')) {
@@ -5668,7 +6176,415 @@
   }
 
   // ============================================================================
-  // 🎨 TARGET DIALOG
+  // 🎨 RESET DIALOG - THEME AWARE WITH PERFECT RESET
+  // ============================================================================
+  function showResetDialog() {
+    requestAnimationFrame(() => {
+      const existing = document.getElementById("sm-reset-dialog");
+      if (existing) existing.remove();
+
+      const currentTimer = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
+      const currentCount = retrieveNumber(KEYS.COUNT, 0);
+      const theme = ThemeManager.getTheme();
+      const colors = ThemeManager.getThemeColors();
+
+      const dialog = document.createElement("div");
+      dialog.id = "sm-reset-dialog";
+      dialog.setAttribute('data-theme', theme);
+
+      dialog.innerHTML = `
+        <style>
+          #sm-reset-dialog {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 99999999;
+            font-family: 'Inter', sans-serif;
+            animation: fadeIn 0.15s ease;
+          }
+          @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+          }
+          @keyframes slideUp {
+            from { transform: translateY(-10px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+          }
+          #sm-reset-backdrop {
+            position: absolute;
+            inset: 0;
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.7)'};
+            backdrop-filter: blur(20px);
+          }
+          #sm-reset-modal {
+            position: relative;
+            width: 420px;
+            background: ${theme === 'light' ? 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)' : 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)'};
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(239, 68, 68, 0.3);
+            overflow: hidden;
+            animation: slideUp 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+          }
+          #sm-reset-modal .header {
+            padding: 20px 24px;
+            background: linear-gradient(135deg, #dc2626, #ef4444);
+          }
+          #sm-reset-modal h3 {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 900;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+          }
+          #sm-reset-modal .body {
+            padding: 24px;
+          }
+          #sm-reset-modal .current-values {
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(15,23,42,0.8)'};
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-around;
+            gap: 16px;
+            border: 1px solid ${theme === 'light' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.2)'};
+          }
+          #sm-reset-modal .value {
+            text-align: center;
+            flex: 1;
+          }
+          #sm-reset-modal .value-label {
+            font-size: 11px;
+            color: ${colors.textTertiary};
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+            letter-spacing: 0.5px;
+          }
+          #sm-reset-modal .value strong {
+            display: block;
+            color: ${colors.textPrimary};
+            font-weight: 900;
+            font-size: 24px;
+            font-variant-numeric: tabular-nums;
+          }
+          #sm-reset-modal .warning-box {
+            background: ${theme === 'light' ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(220, 38, 38, 0.05) 100%)' : 'linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.1) 100%)'};
+            border: 2px solid rgba(239, 68, 68, 0.4);
+            padding: 14px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+          }
+          #sm-reset-modal .warning-text {
+            font-size: 13px;
+            color: #fca5a5;
+            font-weight: 600;
+            line-height: 1.5;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+          }
+          #sm-reset-modal .warning-icon {
+            font-size: 20px;
+            flex-shrink: 0;
+          }
+          #sm-reset-modal .info-box {
+            background: ${theme === 'light' ? 'rgba(59, 130, 246, 0.08)' : 'rgba(59, 130, 246, 0.15)'};
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 12px;
+            color: ${theme === 'light' ? '#1d4ed8' : '#93c5fd'};
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          #sm-reset-modal .options {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+          }
+          #sm-reset-modal .option-btn {
+            padding: 14px 18px;
+            border: 2px solid ${theme === 'light' ? 'rgba(0,0,0,0.1)' : 'rgba(148,163,184,0.2)'};
+            border-radius: 12px;
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.02)' : 'rgba(30,41,59,0.6)'};
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 700;
+            color: ${colors.textPrimary};
+          }
+          #sm-reset-modal .option-btn:hover {
+            border-color: #dc2626;
+            background: rgba(220, 38, 38, 0.15);
+            transform: translateX(6px);
+            box-shadow: 0 6px 20px rgba(220,38,38,0.3);
+          }
+          #sm-reset-modal .option-btn .icon {
+            font-size: 20px;
+          }
+          #sm-reset-modal .option-btn .text {
+            flex: 1;
+          }
+          #sm-reset-modal .option-btn .desc {
+            font-size: 11px;
+            color: ${colors.textTertiary};
+            font-weight: 500;
+            margin-top: 2px;
+          }
+          #sm-reset-modal .footer {
+            padding: 16px 24px;
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.02)' : 'rgba(15,23,42,0.8)'};
+            display: flex;
+            justify-content: flex-end;
+            border-top: 1px solid ${theme === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)'};
+          }
+          #sm-reset-modal .cancel-btn {
+            padding: 12px 24px;
+            border: 2px solid ${theme === 'light' ? 'rgba(0,0,0,0.15)' : 'rgba(148,163,184,0.4)'};
+            background: transparent;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 700;
+            transition: all 0.3s;
+            color: ${colors.textSecondary};
+          }
+          #sm-reset-modal .cancel-btn:hover {
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(148,163,184,0.15)'};
+            border-color: ${theme === 'light' ? 'rgba(0,0,0,0.3)' : '#64748b'};
+            color: ${colors.textPrimary};
+          }
+        </style>
+
+        <div id="sm-reset-backdrop"></div>
+        <div id="sm-reset-modal">
+          <div class="header">
+            <h3>🔄 Manual Reset</h3>
+          </div>
+          <div class="body">
+            <div class="current-values">
+              <div class="value">
+                <div class="value-label">⏱️ Current Timer</div>
+                <strong>${fmt(currentTimer)}</strong>
+              </div>
+              <div class="value">
+                <div class="value-label">📋 Current Count</div>
+                <strong>${currentCount}</strong>
+              </div>
+            </div>
+
+            <div class="warning-box">
+              <div class="warning-text">
+                <span class="warning-icon">⚠️</span>
+                <span>Manual reset will immediately set values to <strong>ZERO</strong>. This action cannot be undone. Data will <strong>NOT</strong> be saved to history.</span>
+              </div>
+            </div>
+
+            <div class="info-box">
+              <span>ℹ️</span>
+              <span>Total Hits (${getPermanentDailyHits()}) and Total Commits (${PermanentTaskCommits.getTotalCommits()}) will NOT be affected. They only reset at midnight.</span>
+            </div>
+
+            <div class="options">
+              <button class="option-btn" data-reset="timer">
+                <span class="icon">⏱️</span>
+                <div class="text">
+                  <div>Reset Timer Only</div>
+                  <div class="desc">Sets timer to 00:00:00, keeps count</div>
+                </div>
+              </button>
+              <button class="option-btn" data-reset="counter">
+                <span class="icon">🔢</span>
+                <div class="text">
+                  <div>Reset Counter Only</div>
+                  <div class="desc">Sets task count to 0, keeps timer</div>
+                </div>
+              </button>
+              <button class="option-btn" data-reset="both">
+                <span class="icon">🔄</span>
+                <div class="text">
+                  <div>Reset Both</div>
+                  <div class="desc">Resets timer and counter to 0</div>
+                </div>
+              </button>
+            </div>
+          </div>
+          <div class="footer">
+            <button class="cancel-btn" id="reset-cancel">Cancel (ESC)</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(dialog);
+
+      const escHandler = (e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          dialog.remove();
+          document.removeEventListener('keydown', escHandler, true);
+        }
+      };
+
+      document.addEventListener('keydown', escHandler, true);
+
+      dialog.querySelector("#sm-reset-backdrop").addEventListener("click", () => {
+        dialog.remove();
+        document.removeEventListener('keydown', escHandler, true);
+      });
+
+      dialog.querySelector("#reset-cancel").addEventListener("click", () => {
+        dialog.remove();
+        document.removeEventListener('keydown', escHandler, true);
+      });
+
+      dialog.querySelectorAll(".option-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const resetType = btn.dataset.reset;
+          dialog.remove();
+          document.removeEventListener('keydown', escHandler, true);
+
+          // Show loading indicator
+          const loadingToast = document.createElement('div');
+          loadingToast.id = 'sm-reset-loading';
+          loadingToast.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: linear-gradient(135deg, #1e293b, #0f172a);
+            color: white;
+            padding: 24px 40px;
+            border-radius: 16px;
+            font-weight: 800;
+            font-size: 16px;
+            z-index: 9999999999;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            border: 2px solid rgba(99, 102, 241, 0.5);
+          `;
+          loadingToast.innerHTML = `
+            <div style="width: 24px; height: 24px; border: 3px solid rgba(99, 102, 241, 0.3); border-top-color: #6366f1; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+            <span>Resetting...</span>
+            <style>
+              @keyframes spin {
+                to { transform: rotate(360deg); }
+              }
+            </style>
+          `;
+          document.body.appendChild(loadingToast);
+
+          // Execute the perfect manual reset
+          const success = await performManualReset(resetType);
+
+          // Remove loading
+          loadingToast.remove();
+
+          // Verify reset worked
+          const verifyTimer = localStorage.getItem(KEYS.DAILY_COMMITTED);
+          const verifyCount = localStorage.getItem(KEYS.COUNT);
+
+          log(`🔍 Reset verification: Timer=${verifyTimer}, Count=${verifyCount}`);
+
+          if (success) {
+            // Show success confirmation
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+              position: fixed;
+              top: 20px;
+              left: 50%;
+              transform: translateX(-50%);
+              background: linear-gradient(135deg, #10b981, #059669);
+              color: white;
+              padding: 16px 32px;
+              border-radius: 14px;
+              font-weight: 800;
+              font-size: 15px;
+              z-index: 9999999999;
+              box-shadow: 0 8px 32px rgba(16, 185, 129, 0.5);
+              animation: slideDown 0.3s ease;
+              display: flex;
+              align-items: center;
+              gap: 12px;
+            `;
+
+            let resetLabel = '';
+            if (resetType === 'timer') resetLabel = 'Timer';
+            else if (resetType === 'counter') resetLabel = 'Counter';
+            else resetLabel = 'Timer & Counter';
+
+            toast.innerHTML = `
+              <span style="font-size: 24px;">✅</span>
+              <span>Reset Complete! ${resetLabel} set to 0</span>
+              <style>
+                @keyframes slideDown {
+                  from { transform: translateX(-50%) translateY(-20px); opacity: 0; }
+                  to { transform: translateX(-50%) translateY(0); opacity: 1; }
+                }
+              </style>
+            `;
+
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+              toast.style.opacity = '0';
+              toast.style.transition = 'opacity 0.3s';
+              setTimeout(() => {
+                toast.remove();
+              }, 300);
+            }, 3000);
+
+            // Force update all displays
+            setTimeout(() => {
+              updateDisplay();
+              updateHomeDisplay();
+              updateTopBanner();
+            }, 100);
+
+          } else {
+            // Show error
+            const errorToast = document.createElement('div');
+            errorToast.style.cssText = `
+              position: fixed;
+              top: 20px;
+              left: 50%;
+              transform: translateX(-50%);
+              background: linear-gradient(135deg, #ef4444, #dc2626);
+              color: white;
+              padding: 16px 32px;
+              border-radius: 14px;
+              font-weight: 800;
+              font-size: 15px;
+              z-index: 9999999999;
+              box-shadow: 0 8px 32px rgba(239, 68, 68, 0.5);
+            `;
+            errorToast.innerHTML = `❌ Reset failed. Please try again.`;
+            document.body.appendChild(errorToast);
+
+            setTimeout(() => {
+              errorToast.remove();
+            }, 3000);
+          }
+        });
+      });
+    });
+  }
+
+  // ============================================================================
+  // 🎨 TARGET DIALOG - THEME AWARE
   // ============================================================================
   function showTargetDialog() {
     requestAnimationFrame(() => {
@@ -5676,9 +6592,13 @@
       if (existing) existing.remove();
 
       const currentTargets = getCustomTargets();
+      const theme = ThemeManager.getTheme();
+      const colors = ThemeManager.getThemeColors();
 
       const targetDialog = document.createElement('div');
       targetDialog.id = 'sm-target-dialog';
+      targetDialog.setAttribute('data-theme', theme);
+
       targetDialog.innerHTML = `
         <style>
           @keyframes targetFadeIn {
@@ -5702,14 +6622,14 @@
           #sm-target-backdrop {
             position: absolute;
             inset: 0;
-            background: linear-gradient(135deg, rgba(0,0,0,0.7) 0%, rgba(15,23,42,0.8) 100%);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.5)' : 'linear-gradient(135deg, rgba(0,0,0,0.7) 0%, rgba(15,23,42,0.8) 100%)'};
             backdrop-filter: blur(20px);
           }
           #sm-target-modal {
             position: relative;
-            width: 380px;
+            width: 400px;
             max-width: calc(100% - 32px);
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%);
+            background: ${theme === 'light' ? 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)' : 'linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%)'};
             backdrop-filter: blur(40px);
             border-radius: 24px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3), 0 0 0 1px rgba(99, 102, 241, 0.3);
@@ -5731,10 +6651,10 @@
           }
           #sm-target-modal .input-group {
             margin-bottom: 20px;
-            background: linear-gradient(135deg, rgba(15,23,42,0.8) 0%, rgba(30,41,59,0.6) 100%);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.03)' : 'linear-gradient(135deg, rgba(15,23,42,0.8) 0%, rgba(30,41,59,0.6) 100%)'};
             padding: 18px;
             border-radius: 14px;
-            border: 1px solid rgba(99, 102, 241, 0.25);
+            border: 1px solid ${theme === 'light' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.25)'};
           }
           #sm-target-modal .input-label {
             display: flex;
@@ -5742,7 +6662,7 @@
             gap: 8px;
             font-size: 12px;
             font-weight: 800;
-            color: #cbd5e1;
+            color: ${colors.textSecondary};
             margin-bottom: 10px;
             text-transform: uppercase;
           }
@@ -5750,9 +6670,9 @@
             width: 100%;
             padding: 14px 16px;
             border-radius: 12px;
-            border: 2px solid rgba(99, 102, 241, 0.3);
-            background: rgba(15, 23, 42, 0.6);
-            color: #f1f5f9;
+            border: 2px solid ${theme === 'light' ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.3)'};
+            background: ${theme === 'light' ? 'rgba(255,255,255,0.8)' : 'rgba(15, 23, 42, 0.6)'};
+            color: ${colors.textPrimary};
             font-size: 16px;
             font-weight: 700;
             font-family: 'Inter', sans-serif;
@@ -5766,7 +6686,7 @@
           }
           #sm-target-modal .input-hint {
             font-size: 11px;
-            color: #94a3b8;
+            color: ${colors.textTertiary};
             margin-top: 8px;
             font-weight: 600;
           }
@@ -5796,11 +6716,11 @@
             box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
           }
           #sm-target-modal .btn-cancel {
-            background: rgba(100, 116, 139, 0.3);
-            color: #cbd5e1;
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.08)' : 'rgba(100, 116, 139, 0.3)'};
+            color: ${colors.textSecondary};
           }
           #sm-target-modal .btn-cancel:hover {
-            background: rgba(100, 116, 139, 0.4);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.12)' : 'rgba(100, 116, 139, 0.4)'};
           }
         </style>
 
@@ -5861,6 +6781,9 @@
 
         targetDialog.remove();
 
+        // Update displays
+        updateDisplay();
+
         if (document.getElementById('sm-dashboard')) {
           const dash = document.getElementById('sm-dashboard');
           dash.remove();
@@ -5879,15 +6802,20 @@
   }
 
   // ============================================================================
-  // 📤 EXPORT DIALOG
+  // 📤 EXPORT DIALOG - THEME AWARE
   // ============================================================================
   function showExportDialog() {
     requestAnimationFrame(() => {
       const existing = document.getElementById('sm-export-dialog');
       if (existing) existing.remove();
 
+      const theme = ThemeManager.getTheme();
+      const colors = ThemeManager.getThemeColors();
+
       const dialog = document.createElement('div');
       dialog.id = 'sm-export-dialog';
+      dialog.setAttribute('data-theme', theme);
+
       dialog.innerHTML = `
         <style>
           @keyframes exportFadeIn {
@@ -5911,14 +6839,14 @@
           #sm-export-backdrop {
             position: absolute;
             inset: 0;
-            background: linear-gradient(135deg, rgba(0,0,0,0.7) 0%, rgba(15,23,42,0.8) 100%);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.5)' : 'linear-gradient(135deg, rgba(0,0,0,0.7) 0%, rgba(15,23,42,0.8) 100%)'};
             backdrop-filter: blur(20px);
           }
           #sm-export-modal {
             position: relative;
-            width: 480px;
+            width: 500px;
             max-width: calc(100% - 32px);
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.98) 0%, rgba(15, 23, 42, 0.98) 100%);
+            background: ${theme === 'light' ? 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)' : 'linear-gradient(135deg, rgba(30, 41, 59, 0.98) 0%, rgba(15, 23, 42, 0.98) 100%)'};
             backdrop-filter: blur(40px);
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(99, 102, 241, 0.3);
@@ -5944,7 +6872,7 @@
           .export-section-title {
             font-size: 13px;
             font-weight: 800;
-            color: #f1f5f9;
+            color: ${colors.textPrimary};
             margin-bottom: 12px;
             text-transform: uppercase;
           }
@@ -5961,15 +6889,15 @@
           .date-input-label {
             font-size: 11px;
             font-weight: 700;
-            color: #94a3b8;
+            color: ${colors.textTertiary};
             text-transform: uppercase;
           }
           .date-input {
             padding: 10px 12px;
-            background: rgba(15, 23, 42, 0.8);
-            border: 2px solid rgba(99, 102, 241, 0.3);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(15, 23, 42, 0.8)'};
+            border: 2px solid ${theme === 'light' ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.3)'};
             border-radius: 8px;
-            color: #f1f5f9;
+            color: ${colors.textPrimary};
             font-size: 13px;
             font-weight: 600;
             font-family: 'Inter', sans-serif;
@@ -5986,17 +6914,17 @@
           }
           .quick-select-btn {
             padding: 8px 12px;
-            background: rgba(99, 102, 241, 0.1);
-            border: 1px solid rgba(99, 102, 241, 0.3);
+            background: ${theme === 'light' ? 'rgba(99, 102, 241, 0.08)' : 'rgba(99, 102, 241, 0.1)'};
+            border: 1px solid ${theme === 'light' ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.3)'};
             border-radius: 8px;
-            color: #a5b4fc;
+            color: ${theme === 'light' ? '#6366f1' : '#a5b4fc'};
             font-size: 11px;
             font-weight: 700;
             cursor: pointer;
             transition: all 0.3s;
           }
           .quick-select-btn:hover {
-            background: rgba(99, 102, 241, 0.2);
+            background: ${theme === 'light' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.2)'};
             border-color: #6366f1;
             transform: translateY(-2px);
           }
@@ -6007,10 +6935,10 @@
           }
           .export-format-btn {
             padding: 14px 20px;
-            background: rgba(15, 23, 42, 0.6);
-            border: 2px solid rgba(99, 102, 241, 0.3);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(15, 23, 42, 0.6)'};
+            border: 2px solid ${theme === 'light' ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.3)'};
             border-radius: 12px;
-            color: #f1f5f9;
+            color: ${colors.textPrimary};
             font-size: 14px;
             font-weight: 700;
             cursor: pointer;
@@ -6019,7 +6947,7 @@
             align-items: center;
           }
           .export-format-btn:hover {
-            background: rgba(99, 102, 241, 0.2);
+            background: ${theme === 'light' ? 'rgba(99, 102, 241, 0.1)' : 'rgba(99, 102, 241, 0.2)'};
             border-color: #6366f1;
             transform: translateX(4px);
           }
@@ -6038,15 +6966,15 @@
           }
           .export-format-desc {
             font-size: 10px;
-            color: #94a3b8;
+            color: ${colors.textTertiary};
             font-weight: 600;
           }
           .export-footer {
             padding: 16px 24px;
-            background: rgba(0, 0, 0, 0.2);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.02)' : 'rgba(0, 0, 0, 0.2)'};
             display: flex;
             justify-content: space-between;
-            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            border-top: 1px solid ${theme === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(255, 255, 255, 0.05)'};
           }
           .export-btn {
             padding: 10px 20px;
@@ -6067,11 +6995,11 @@
             box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
           }
           .export-btn-close {
-            background: rgba(100, 116, 139, 0.3);
-            color: #cbd5e1;
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.08)' : 'rgba(100, 116, 139, 0.3)'};
+            color: ${colors.textSecondary};
           }
           .export-btn-close:hover {
-            background: rgba(100, 116, 139, 0.5);
+            background: ${theme === 'light' ? 'rgba(0,0,0,0.12)' : 'rgba(100, 116, 139, 0.5)'};
           }
         </style>
 
@@ -6142,7 +7070,7 @@
       dialog.querySelectorAll('.quick-select-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           const range = btn.dataset.range;
-                    const fromInput = dialog.querySelector('#export-date-from');
+          const fromInput = dialog.querySelector('#export-date-from');
           const toInput = dialog.querySelector('#export-date-to');
           const today = new Date();
 
@@ -6234,7 +7162,173 @@
   }
 
   // ============================================================================
-  // 📊 ULTIMATE PROFESSIONAL DASHBOARD v7.0
+  // 📈 SVG LINE CHART GENERATOR - DUAL AXIS
+  // ============================================================================
+  function generateDualAxisLineChart(data, options = {}) {
+    const {
+      width = 800,
+      height = 300,
+      padding = { top: 40, right: 60, bottom: 50, left: 60 },
+      line1Color = '#6366f1',
+      line2Color = '#10b981',
+      line1Label = 'Tasks',
+      line2Label = 'Time (hours)',
+      showDots = true,
+      showGrid = true,
+      showArea = true,
+      animate = true
+    } = options;
+
+    const chartWidth = width - padding.left - padding.right;
+    const chartHeight = height - padding.top - padding.bottom;
+
+    // Calculate max values for each axis
+    const maxValue1 = Math.max(...data.map(d => d.value1 || 0), 1);
+    const maxValue2 = Math.max(...data.map(d => d.value2 || 0), 1);
+
+    // Generate points for each line
+    const points1 = data.map((d, i) => {
+      const x = padding.left + (i / (data.length - 1 || 1)) * chartWidth;
+      const y = padding.top + chartHeight - ((d.value1 || 0) / maxValue1) * chartHeight;
+      return { x, y, value: d.value1 || 0, label: d.label };
+    });
+
+    const points2 = data.map((d, i) => {
+      const x = padding.left + (i / (data.length - 1 || 1)) * chartWidth;
+      const y = padding.top + chartHeight - ((d.value2 || 0) / maxValue2) * chartHeight;
+      return { x, y, value: d.value2 || 0, label: d.label };
+    });
+
+    // Create path strings
+    const createPath = (points) => {
+      if (points.length === 0) return '';
+      return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+    };
+
+    // Create area path (for fill)
+    const createAreaPath = (points) => {
+      if (points.length === 0) return '';
+      const linePath = createPath(points);
+      return `${linePath} L ${points[points.length - 1].x} ${padding.top + chartHeight} L ${points[0].x} ${padding.top + chartHeight} Z`;
+    };
+
+    // Generate Y-axis labels
+    const yLabels1 = [0, Math.round(maxValue1 * 0.25), Math.round(maxValue1 * 0.5), Math.round(maxValue1 * 0.75), maxValue1];
+    const yLabels2 = [0, (maxValue2 * 0.25).toFixed(1), (maxValue2 * 0.5).toFixed(1), (maxValue2 * 0.75).toFixed(1), maxValue2.toFixed(1)];
+
+    // Generate X-axis labels (show every nth label based on data length)
+    const labelInterval = Math.ceil(data.length / 7);
+
+    return `
+      <svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <linearGradient id="gradient1" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" style="stop-color:${line1Color};stop-opacity:0.3"/>
+            <stop offset="100%" style="stop-color:${line1Color};stop-opacity:0.05"/>
+          </linearGradient>
+          <linearGradient id="gradient2" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" style="stop-color:${line2Color};stop-opacity:0.3"/>
+            <stop offset="100%" style="stop-color:${line2Color};stop-opacity:0.05"/>
+          </linearGradient>
+          <filter id="glow1">
+            <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+            <feMerge>
+              <feMergeNode in="coloredBlur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+          <filter id="glow2">
+            <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+            <feMerge>
+              <feMergeNode in="coloredBlur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+
+        <!-- Grid lines -->
+        ${showGrid ? `
+          <g class="grid-lines" stroke="var(--border-subtle)" stroke-width="1" opacity="0.5">
+            ${yLabels1.map((_, i) => {
+              const y = padding.top + (i / 4) * chartHeight;
+              return `<line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke-dasharray="4,4"/>`;
+            }).join('')}
+          </g>
+        ` : ''}
+
+        <!-- Area fills -->
+        ${showArea ? `
+          <path d="${createAreaPath(points1)}" fill="url(#gradient1)" opacity="0.6">
+            ${animate ? `<animate attributeName="opacity" from="0" to="0.6" dur="0.8s" fill="freeze"/>` : ''}
+          </path>
+          <path d="${createAreaPath(points2)}" fill="url(#gradient2)" opacity="0.6">
+            ${animate ? `<animate attributeName="opacity" from="0" to="0.6" dur="0.8s" fill="freeze"/>` : ''}
+          </path>
+        ` : ''}
+
+        <!-- Line 1 (Tasks) -->
+        <path d="${createPath(points1)}" fill="none" stroke="${line1Color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow1)">
+          ${animate ? `<animate attributeName="stroke-dasharray" from="0 9999" to="9999 0" dur="1.5s" fill="freeze"/>` : ''}
+        </path>
+
+        <!-- Line 2 (Time) -->
+        <path d="${createPath(points2)}" fill="none" stroke="${line2Color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow2)">
+          ${animate ? `<animate attributeName="stroke-dasharray" from="0 9999" to="9999 0" dur="1.5s" fill="freeze"/>` : ''}
+        </path>
+
+        <!-- Dots for Line 1 -->
+        ${showDots ? points1.map((p, i) => `
+          <circle cx="${p.x}" cy="${p.y}" r="5" fill="${line1Color}" stroke="var(--bg-primary)" stroke-width="2" class="chart-dot" data-index="${i}" data-line="1" data-value="${p.value}" data-label="${p.label}">
+            ${animate ? `<animate attributeName="r" from="0" to="5" dur="0.3s" begin="${0.5 + i * 0.05}s" fill="freeze"/>` : ''}
+          </circle>
+        `).join('') : ''}
+
+        <!-- Dots for Line 2 -->
+        ${showDots ? points2.map((p, i) => `
+          <circle cx="${p.x}" cy="${p.y}" r="5" fill="${line2Color}" stroke="var(--bg-primary)" stroke-width="2" class="chart-dot" data-index="${i}" data-line="2" data-value="${p.value}" data-label="${p.label}">
+            ${animate ? `<animate attributeName="r" from="0" to="5" dur="0.3s" begin="${0.5 + i * 0.05}s" fill="freeze"/>` : ''}
+          </circle>
+        `).join('') : ''}
+
+        <!-- Y-Axis Left (Tasks) -->
+        <g class="y-axis-left" fill="${line1Color}" font-size="11" font-weight="700">
+          ${yLabels1.reverse().map((label, i) => {
+            const y = padding.top + (i / 4) * chartHeight;
+            return `<text x="${padding.left - 10}" y="${y + 4}" text-anchor="end">${label}</text>`;
+          }).join('')}
+          <text x="${padding.left - 35}" y="${padding.top + chartHeight / 2}" text-anchor="middle" transform="rotate(-90, ${padding.left - 35}, ${padding.top + chartHeight / 2})" font-size="12" font-weight="800">${line1Label}</text>
+        </g>
+
+        <!-- Y-Axis Right (Time) -->
+        <g class="y-axis-right" fill="${line2Color}" font-size="11" font-weight="700">
+          ${yLabels2.reverse().map((label, i) => {
+            const y = padding.top + (i / 4) * chartHeight;
+            return `<text x="${width - padding.right + 10}" y="${y + 4}" text-anchor="start">${label}h</text>`;
+          }).join('')}
+          <text x="${width - padding.right + 40}" y="${padding.top + chartHeight / 2}" text-anchor="middle" transform="rotate(90, ${width - padding.right + 40}, ${padding.top + chartHeight / 2})" font-size="12" font-weight="800">${line2Label}</text>
+        </g>
+
+        <!-- X-Axis Labels -->
+        <g class="x-axis" fill="var(--text-tertiary)" font-size="10" font-weight="700">
+          ${data.map((d, i) => {
+            if (i % labelInterval === 0 || i === data.length - 1) {
+              const x = padding.left + (i / (data.length - 1 || 1)) * chartWidth;
+              return `<text x="${x}" y="${height - 15}" text-anchor="middle">${d.label}</text>`;
+            }
+            return '';
+          }).join('')}
+        </g>
+
+        <!-- Axis Lines -->
+        <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${padding.top + chartHeight}" stroke="var(--border-default)" stroke-width="2"/>
+        <line x1="${width - padding.right}" y1="${padding.top}" x2="${width - padding.right}" y2="${padding.top + chartHeight}" stroke="var(--border-default)" stroke-width="2"/>
+        <line x1="${padding.left}" y1="${padding.top + chartHeight}" x2="${width - padding.right}" y2="${padding.top + chartHeight}" stroke="var(--border-default)" stroke-width="2"/>
+      </svg>
+    `;
+  }
+
+  // ============================================================================
+  // 📊 ULTIMATE PROFESSIONAL DASHBOARD v7.3 - WITH DUAL-AXIS LINE CHARTS
   // ============================================================================
   function showDashboard() {
     const existing = document.getElementById('sm-dashboard');
@@ -6243,13 +7337,14 @@
       return;
     }
 
-    log("🎯 Opening ULTIMATE v7.0 dashboard...");
+    log("🎯 Opening ULTIMATE v7.3 dashboard with Dual-Axis Line Charts...");
 
     // Gather all data
     const committed = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
     const count = retrieveNumber(KEYS.COUNT, 0);
     const allTimeCommits = retrieveNumber(KEYS.TOTAL_COMMITS_ALLTIME, 0);
-    const todayHits = getTodayHits();
+    const permanentHits = getPermanentDailyHits();
+    const permanentTotalCommits = PermanentTaskCommits.getTotalCommits();
     const todayTasks = aggregateTodayTaskData();
     const last7Days = getLast7DaysData();
     const last30Days = getLast30DaysData();
@@ -6257,14 +7352,16 @@
     const customTargets = getCustomTargets();
     const sessions = retrieve(KEYS.SESSIONS, []);
     const history = retrieve(KEYS.HISTORY, {});
+    const theme = ThemeManager.getTheme();
 
     const targetSeconds = customTargets.hours * 3600;
     const goalPercent = Math.min(100, Math.round((committed / targetSeconds) * 100));
     const countProgress = customTargets.count ? Math.round((count / customTargets.count) * 100) : 0;
 
     const avgTaskTime = count > 0 ? Math.round(committed / count) : 0;
-    const sortedTasks = todayTasks.filter(t => t.submitted > 0).sort((a, b) => b.totalTime - a.totalTime);
+    const sortedTasks = todayTasks.filter(t => t.submitted > 0 || t.permanentCommits > 0).sort((a, b) => b.permanentCommits - a.permanentCommits);
     const thisWeekTotal = last7Days.reduce((sum, d) => sum + d.count, 0);
+    const thisWeekTime = last7Days.reduce((sum, d) => sum + d.time, 0);
 
     // Analytics calculations
     const totalAllTime = Object.values(history).reduce((sum, val) => sum + val, 0);
@@ -6316,18 +7413,46 @@
     const hourlyData = getHourlyData();
     const peakHour = hourlyData.reduce((max, h) => h.tasks > max.tasks ? h : max, hourlyData[0]);
 
-    // Smart Insights (renamed from AI)
+    // Smart Insights
     const smartInsights = SmartEngine.getInsights();
 
     // Task type detection
     const currentTaskType = TaskTypeDetector.detect();
 
-    // 30-day chart data
-    const max30DayCount = Math.max(...last30Days.map(d => d.count), 1);
-    const max30DayTime = Math.max(...last30Days.map(d => d.time), 1);
+    // Prepare data for line charts
+    const weeklyChartData = last7Days.map(d => ({
+      label: d.dayName,
+      value1: d.count,
+      value2: d.time / 3600 // Convert to hours
+    }));
+
+    const monthlyChartData = last30Days.map(d => ({
+      label: `${d.month} ${d.dayNum}`,
+      value1: d.count,
+      value2: d.time / 3600 // Convert to hours
+    }));
+
+    // Generate SVG charts
+    const weeklyLineChart = generateDualAxisLineChart(weeklyChartData, {
+      width: 600,
+      height: 280,
+      line1Label: 'Tasks',
+      line2Label: 'Time (h)',
+      showArea: true
+    });
+
+    const monthlyLineChart = generateDualAxisLineChart(monthlyChartData, {
+      width: 900,
+      height: 350,
+      padding: { top: 40, right: 70, bottom: 60, left: 70 },
+      line1Label: 'Tasks',
+      line2Label: 'Time (h)',
+      showArea: true
+    });
 
     const root = document.createElement('div');
     root.id = 'sm-dashboard';
+    root.setAttribute('data-theme', theme);
 
     root.innerHTML = `
       <style>
@@ -6357,7 +7482,7 @@
           --transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
         }
 
-        [data-theme="light"] {
+        #sm-dashboard[data-theme="light"] {
           --bg-primary: #FFFFFF;
           --bg-secondary: #F8F9FA;
           --bg-tertiary: #F1F3F5;
@@ -6374,7 +7499,6 @@
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes slideUp { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
-        @keyframes barGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
 
         #sm-dashboard {
           position: fixed;
@@ -6394,7 +7518,7 @@
 
         /* SIDEBAR */
         .sidebar {
-          width: 240px;
+          width: 260px;
           background: var(--bg-secondary);
           border-right: 1px solid var(--border-subtle);
           display: flex;
@@ -6415,19 +7539,20 @@
         }
 
         .logo-icon {
-          width: 28px;
-          height: 28px;
-          background: var(--accent);
-          border-radius: 7px;
+          width: 32px;
+          height: 32px;
+          background: linear-gradient(135deg, var(--accent), #8b5cf6);
+          border-radius: 8px;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 16px;
+          font-size: 18px;
+          box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
         }
 
         .logo-text h1 {
-          font-size: 15px;
-          font-weight: 700;
+          font-size: 16px;
+          font-weight: 800;
           margin: 0;
         }
 
@@ -6435,6 +7560,7 @@
           font-size: 10px;
           color: var(--text-tertiary);
           margin: 2px 0 0 0;
+          font-weight: 600;
         }
 
         .sidebar-stats {
@@ -6444,23 +7570,29 @@
         }
 
         .sidebar-stat {
-          padding: 8px;
+          padding: 10px;
           background: var(--bg-tertiary);
-          border-radius: 6px;
+          border-radius: 8px;
           border: 1px solid var(--border-subtle);
+          transition: all var(--transition);
+        }
+
+        .sidebar-stat:hover {
+          border-color: var(--accent-border);
         }
 
         .sidebar-stat-label {
           font-size: 10px;
           color: var(--text-tertiary);
-          margin-bottom: 2px;
-          font-weight: 600;
+          margin-bottom: 3px;
+          font-weight: 700;
           text-transform: uppercase;
+          letter-spacing: 0.3px;
         }
 
         .sidebar-stat-value {
-          font-size: 15px;
-          font-weight: 800;
+          font-size: 17px;
+          font-weight: 900;
           color: var(--text-primary);
           font-variant-numeric: tabular-nums;
         }
@@ -6486,7 +7618,7 @@
 
         .nav-label {
           font-size: 10px;
-          font-weight: 700;
+          font-weight: 800;
           text-transform: uppercase;
           letter-spacing: 0.5px;
           color: var(--text-tertiary);
@@ -6498,10 +7630,10 @@
           display: flex;
           align-items: center;
           gap: 10px;
-          padding: 8px 10px;
-          border-radius: 7px;
+          padding: 10px 12px;
+          border-radius: 8px;
           font-size: 13px;
-          font-weight: 500;
+          font-weight: 600;
           color: var(--text-secondary);
           cursor: pointer;
           transition: all var(--transition);
@@ -6518,22 +7650,22 @@
           background: var(--accent-subtle);
           color: var(--accent);
           border-color: var(--accent-border);
-          font-weight: 600;
+          font-weight: 700;
         }
 
         .nav-icon {
-          font-size: 15px;
-          width: 18px;
+          font-size: 16px;
+          width: 20px;
           text-align: center;
         }
 
         .nav-badge {
           margin-left: auto;
-          padding: 2px 6px;
+          padding: 3px 8px;
           background: var(--bg-elevated);
-          border-radius: 4px;
+          border-radius: 6px;
           font-size: 10px;
-          font-weight: 700;
+          font-weight: 800;
           color: var(--text-tertiary);
         }
 
@@ -6551,20 +7683,21 @@
           display: flex;
           align-items: center;
           gap: 8px;
-          padding: 10px;
+          padding: 12px;
           background: var(--bg-elevated);
-          border-radius: 7px;
+          border-radius: 8px;
           font-size: 11px;
           color: var(--text-secondary);
           border: 1px solid var(--border-subtle);
         }
 
         .status-dot {
-          width: 6px;
-          height: 6px;
+          width: 8px;
+          height: 8px;
           border-radius: 50%;
           background: var(--success);
           animation: pulse 2s infinite;
+          box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
         }
 
         /* MAIN CONTENT */
@@ -6576,7 +7709,7 @@
         }
 
         .top-bar {
-          height: 52px;
+          height: 56px;
           background: var(--bg-secondary);
           border-bottom: 1px solid var(--border-subtle);
           display: flex;
@@ -6587,8 +7720,8 @@
         }
 
         .page-title {
-          font-size: 17px;
-          font-weight: 700;
+          font-size: 18px;
+          font-weight: 800;
         }
 
         .top-actions {
@@ -6601,10 +7734,10 @@
           display: inline-flex;
           align-items: center;
           gap: 6px;
-          padding: 7px 14px;
-          border-radius: 7px;
+          padding: 8px 16px;
+          border-radius: 8px;
           font-size: 12px;
-          font-weight: 600;
+          font-weight: 700;
           cursor: pointer;
           transition: all var(--transition);
           border: 1px solid var(--border-default);
@@ -6620,19 +7753,20 @@
         }
 
         .btn-primary {
-          background: var(--accent);
+          background: linear-gradient(135deg, var(--accent), #8b5cf6);
           color: white;
-          border-color: var(--accent);
+          border-color: transparent;
+          box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
         }
 
         .btn-primary:hover {
-          background: var(--accent-hover);
+          box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
         }
 
         .content-area {
           flex: 1;
           overflow-y: auto;
-          padding: 16px;
+          padding: 20px;
         }
 
         .content-area::-webkit-scrollbar {
@@ -6650,15 +7784,15 @@
           gap: 4px;
           padding: 4px;
           background: var(--bg-elevated);
-          border-radius: 7px;
+          border-radius: 8px;
           border: 1px solid var(--border-subtle);
         }
 
         .theme-option {
-          padding: 5px 10px;
-          border-radius: 5px;
+          padding: 6px 12px;
+          border-radius: 6px;
           font-size: 11px;
-          font-weight: 600;
+          font-weight: 700;
           cursor: pointer;
           transition: all var(--transition);
           color: var(--text-tertiary);
@@ -6669,7 +7803,7 @@
         }
 
         .theme-option.active {
-          background: var(--accent);
+          background: linear-gradient(135deg, var(--accent), #8b5cf6);
           color: white;
         }
 
@@ -6679,9 +7813,9 @@
           align-items: center;
           gap: 4px;
           padding: 3px 8px;
-          border-radius: 4px;
+          border-radius: 6px;
           font-size: 10px;
-          font-weight: 700;
+          font-weight: 800;
           margin-left: 6px;
         }
 
@@ -6704,8 +7838,8 @@
         .hero-stat {
           background: var(--bg-secondary);
           border: 1px solid var(--border-subtle);
-          border-radius: 12px;
-          padding: 18px;
+          border-radius: 14px;
+          padding: 20px;
           transition: all var(--transition);
           animation: slideUp 0.3s ease;
           animation-fill-mode: both;
@@ -6719,7 +7853,7 @@
           bottom: 0;
           left: 0;
           right: 0;
-          height: 2px;
+          height: 3px;
           background: var(--stat-color, var(--accent));
           transform: scaleX(0);
           transform-origin: left;
@@ -6733,126 +7867,128 @@
         .hero-stat:hover {
           background: var(--bg-tertiary);
           border-color: var(--border-default);
-          transform: translateY(-2px);
+          transform: translateY(-3px);
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
         }
 
         .hero-stat-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          margin-bottom: 10px;
+          margin-bottom: 12px;
         }
 
         .hero-stat-icon {
-          font-size: 16px;
-          opacity: 0.7;
+          font-size: 18px;
+          opacity: 0.8;
         }
 
         .hero-stat-trend {
           font-size: 10px;
-          font-weight: 600;
-          padding: 3px 7px;
-          border-radius: 4px;
+          font-weight: 700;
+          padding: 4px 8px;
+          border-radius: 6px;
           background: var(--success-subtle);
           color: var(--success);
         }
 
         .hero-stat-label {
           font-size: 11px;
-          font-weight: 600;
+          font-weight: 700;
           text-transform: uppercase;
           letter-spacing: 0.5px;
           color: var(--text-tertiary);
-          margin-bottom: 6px;
+          margin-bottom: 8px;
         }
 
         .hero-stat-value {
-          font-size: 28px;
-          font-weight: 800;
+          font-size: 32px;
+          font-weight: 900;
           color: var(--text-primary);
           line-height: 1;
-          margin-bottom: 8px;
+          margin-bottom: 10px;
           font-variant-numeric: tabular-nums;
         }
 
         .hero-stat-meta {
           font-size: 11px;
           color: var(--text-secondary);
-          font-weight: 500;
+          font-weight: 600;
           display: flex;
           justify-content: space-between;
           align-items: center;
         }
 
         .stat-progress {
-          margin-top: 10px;
-          height: 4px;
+          margin-top: 12px;
+          height: 5px;
           background: var(--bg-elevated);
-          border-radius: 2px;
+          border-radius: 3px;
           overflow: hidden;
         }
 
         .stat-progress-fill {
           height: 100%;
           background: var(--stat-color, var(--accent));
-          border-radius: 2px;
+          border-radius: 3px;
           transition: width 1s ease;
         }
 
         /* SECTIONS */
         .section {
           background: var(--bg-secondary);
-          border: 1px solid var(--border-subtle);
-          border-radius: 12px;
-          margin-bottom: 16px;
+                    border: 1px solid var(--border-subtle);
+          border-radius: 14px;
+          margin-bottom: 20px;
           animation: slideUp 0.4s ease;
           overflow: hidden;
         }
 
         .section-header {
-          padding: 14px 18px;
+          padding: 16px 20px;
           border-bottom: 1px solid var(--border-subtle);
           display: flex;
           align-items: center;
           justify-content: space-between;
+          background: var(--bg-tertiary);
         }
 
         .section-title {
           font-size: 15px;
-          font-weight: 700;
+          font-weight: 800;
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 10px;
         }
 
         .section-badge {
-          font-size: 10px;
-          font-weight: 600;
+          font-size: 11px;
+          font-weight: 700;
           color: var(--text-tertiary);
           background: var(--bg-elevated);
-          padding: 4px 8px;
-          border-radius: 4px;
+          padding: 5px 10px;
+          border-radius: 6px;
         }
 
         .section-content {
-          padding: 16px;
+          padding: 20px;
         }
 
         /* Search Box */
         .search-box {
           position: relative;
-          margin-bottom: 12px;
+          margin-bottom: 16px;
         }
 
         .search-input {
           width: 100%;
-          padding: 10px 36px 10px 12px;
+          padding: 12px 40px 12px 14px;
           background: var(--bg-tertiary);
-          border: 1px solid var(--border-subtle);
-          border-radius: 8px;
+          border: 2px solid var(--border-subtle);
+          border-radius: 10px;
           color: var(--text-primary);
           font-size: 13px;
-          font-weight: 500;
+          font-weight: 600;
           transition: all var(--transition);
           box-sizing: border-box;
         }
@@ -6865,274 +8001,144 @@
 
         .search-icon {
           position: absolute;
-          right: 12px;
+          right: 14px;
           top: 50%;
           transform: translateY(-50%);
           color: var(--text-tertiary);
           pointer-events: none;
+          font-size: 14px;
         }
 
         /* GRIDS */
         .grid-2 {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 16px;
+          gap: 20px;
         }
 
         .grid-3 {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
-          gap: 16px;
+          gap: 20px;
         }
 
         .grid-4 {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
-          gap: 16px;
+          gap: 20px;
         }
 
-        /* ENHANCED BAR CHART */
-        .bar-chart-container {
+        /* LINE CHART STYLES */
+        .line-chart-container {
           position: relative;
-          height: 280px;
-          padding: 20px 10px 40px 40px;
-        }
-
-        .bar-chart {
-          display: flex;
-          align-items: flex-end;
-          justify-content: space-between;
-          height: 100%;
-          gap: 4px;
-          position: relative;
-        }
-
-        .bar-wrapper {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          height: 100%;
-          position: relative;
-        }
-
-        .bar-group {
-          flex: 1;
-          display: flex;
-          align-items: flex-end;
-          justify-content: center;
-          gap: 2px;
           width: 100%;
+          overflow: hidden;
         }
 
-        .bar {
-          width: 45%;
-          max-width: 20px;
-          border-radius: 4px 4px 0 0;
-          transition: all 0.3s ease;
+        .line-chart-container svg {
+          display: block;
+        }
+
+        .chart-dot {
           cursor: pointer;
-          position: relative;
-          transform-origin: bottom;
-          animation: barGrow 0.5s ease forwards;
+          transition: all 0.2s ease;
         }
 
-        .bar.tasks-bar {
-          background: linear-gradient(180deg, #6366f1, #4f46e5);
-        }
-
-        .bar.time-bar {
-          background: linear-gradient(180deg, #10b981, #059669);
-        }
-
-        .bar:hover {
+        .chart-dot:hover {
+          r: 8;
           filter: brightness(1.2);
-          transform: scaleY(1.02);
-        }
-
-        .bar-label {
-          font-size: 9px;
-          color: var(--text-tertiary);
-          margin-top: 8px;
-          text-align: center;
-          font-weight: 600;
-          white-space: nowrap;
-        }
-
-        .bar-tooltip {
-          position: absolute;
-          bottom: calc(100% + 8px);
-          left: 50%;
-          transform: translateX(-50%) scale(0.9);
-          background: var(--bg-primary);
-          border: 1px solid var(--border-default);
-          padding: 8px 12px;
-          border-radius: 8px;
-          font-size: 11px;
-          white-space: nowrap;
-          opacity: 0;
-          pointer-events: none;
-          transition: all 0.2s;
-          z-index: 100;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        }
-
-        .bar-wrapper:hover .bar-tooltip {
-          opacity: 1;
-          transform: translateX(-50%) scale(1);
-        }
-
-        .bar-tooltip-title {
-          font-weight: 700;
-          color: var(--text-primary);
-          margin-bottom: 4px;
-        }
-
-        .bar-tooltip-row {
-          display: flex;
-          justify-content: space-between;
-          gap: 12px;
-          color: var(--text-secondary);
-        }
-
-        .bar-tooltip-value {
-          font-weight: 700;
-          color: var(--accent);
-        }
-
-        .chart-y-axis {
-          position: absolute;
-          left: 0;
-          top: 20px;
-          bottom: 40px;
-          width: 35px;
-          display: flex;
-          flex-direction: column;
-          justify-content: space-between;
-          align-items: flex-end;
-          padding-right: 5px;
-        }
-
-        .y-axis-label {
-          font-size: 9px;
-          color: var(--text-tertiary);
-          font-weight: 600;
-        }
-
-        .chart-grid-lines {
-          position: absolute;
-          left: 40px;
-          right: 10px;
-          top: 20px;
-          bottom: 40px;
-          display: flex;
-          flex-direction: column;
-          justify-content: space-between;
-          pointer-events: none;
-        }
-
-        .grid-line {
-          height: 1px;
-          background: var(--border-subtle);
         }
 
         .chart-legend {
           display: flex;
           justify-content: center;
-          gap: 20px;
+          gap: 24px;
           margin-top: 16px;
+          padding-top: 16px;
+          border-top: 1px solid var(--border-subtle);
         }
 
         .legend-item {
           display: flex;
           align-items: center;
-          gap: 6px;
-          font-size: 11px;
-          color: var(--text-secondary);
-          font-weight: 600;
+          gap: 8px;
         }
 
         .legend-color {
-          width: 12px;
-          height: 12px;
-          border-radius: 3px;
+          width: 16px;
+          height: 4px;
+          border-radius: 2px;
         }
 
-        .legend-color.tasks {
-          background: linear-gradient(180deg, #6366f1, #4f46e5);
-        }
-
-        .legend-color.time {
-          background: linear-gradient(180deg, #10b981, #059669);
-        }
-
-        /* HEATMAP */
-        .heatmap-container {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(65px, 1fr));
-          gap: 8px;
-          padding: 12px 8px;
-        }
-
-        .heatmap-cell {
-          aspect-ratio: 1;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          border-radius: 10px;
-          border: 1px solid var(--border-subtle);
-          background: var(--bg-elevated);
-          cursor: pointer;
-          transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
-          position: relative;
-          overflow: hidden;
-        }
-
-        .heatmap-cell:hover {
-          transform: scale(1.08);
-          z-index: 10;
-          box-shadow: 0 6px 20px rgba(0,0,0,0.3);
-        }
-
-        .heatmap-cell[data-intensity="0"] { background: rgba(100, 116, 139, 0.1); }
-        .heatmap-cell[data-intensity="1"] { background: rgba(59, 130, 246, 0.2); border-color: rgba(59, 130, 246, 0.3); }
-        .heatmap-cell[data-intensity="2"] { background: rgba(99, 102, 241, 0.35); border-color: rgba(99, 102, 241, 0.4); }
-        .heatmap-cell[data-intensity="3"] { background: rgba(139, 92, 246, 0.5); border-color: rgba(139, 92, 246, 0.5); }
-        .heatmap-cell[data-intensity="4"] { background: rgba(168, 85, 247, 0.7); border-color: rgba(168, 85, 247, 0.6); box-shadow: 0 0 12px rgba(168, 85, 247, 0.25); }
-
-        .heatmap-hour {
-          font-size: 13px;
-          font-weight: 800;
-          color: var(--text-primary);
-          margin-bottom: 3px;
-        }
-
-        .heatmap-tasks {
-          font-size: 10px;
-          font-weight: 600;
+        .legend-label {
+          font-size: 12px;
+          font-weight: 700;
           color: var(--text-secondary);
         }
 
-        .heatmap-time {
-          font-size: 9px;
-          font-weight: 500;
-          color: var(--text-tertiary);
+        /* Chart Tooltip */
+        .chart-tooltip {
+          position: absolute;
+          background: var(--bg-primary);
+          border: 1px solid var(--border-default);
+          padding: 10px 14px;
+          border-radius: 10px;
+          font-size: 12px;
+          pointer-events: none;
+          opacity: 0;
+          transition: all 0.2s ease;
+          z-index: 100;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+          min-width: 120px;
         }
 
-        /* TASKS TABLE */
+        .chart-tooltip.visible {
+          opacity: 1;
+        }
+
+        .chart-tooltip-title {
+          font-weight: 800;
+          color: var(--text-primary);
+          margin-bottom: 6px;
+        }
+
+        .chart-tooltip-row {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 4px;
+        }
+
+        .chart-tooltip-label {
+          color: var(--text-secondary);
+        }
+
+        .chart-tooltip-value {
+          font-weight: 800;
+        }
+
+        /* TASKS TABLE - FULL NAMES */
+        .tasks-table-container {
+          overflow-x: auto;
+          max-height: 500px;
+          overflow-y: auto;
+        }
+
         .tasks-table {
           width: 100%;
           border-collapse: collapse;
+          min-width: 900px;
         }
 
         .tasks-table thead th {
-          padding: 12px 16px;
+          padding: 14px 16px;
           text-align: left;
           font-size: 11px;
-          font-weight: 600;
+          font-weight: 800;
           text-transform: uppercase;
+          letter-spacing: 0.5px;
           color: var(--text-tertiary);
-          border-bottom: 1px solid var(--border-subtle);
+          border-bottom: 2px solid var(--border-default);
           background: var(--bg-tertiary);
           position: sticky;
           top: 0;
@@ -7155,10 +8161,11 @@
         }
 
         .tasks-table tbody td {
-          padding: 12px 16px;
+          padding: 14px 16px;
           font-size: 13px;
           color: var(--text-secondary);
           border-bottom: 1px solid var(--border-subtle);
+          vertical-align: middle;
         }
 
         .tasks-table tbody tr {
@@ -7169,27 +8176,22 @@
           background: var(--bg-elevated);
         }
 
-        .task-name {
-          font-weight: 600;
+        /* FULL TASK NAME - NO TRUNCATION */
+        .task-name-full {
+          font-weight: 700;
           color: var(--text-primary);
-          max-width: 300px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-          cursor: pointer;
-        }
-
-        .task-name:hover {
-          color: var(--accent);
-          text-decoration: underline;
+          word-wrap: break-word;
+          word-break: break-word;
+          max-width: 350px;
+          line-height: 1.4;
         }
 
         .badge {
           display: inline-flex;
-          padding: 4px 8px;
-          border-radius: 5px;
+          padding: 5px 10px;
+          border-radius: 6px;
           font-size: 11px;
-          font-weight: 600;
+          font-weight: 700;
         }
 
         .badge-success {
@@ -7202,75 +8204,83 @@
           color: var(--warning);
         }
 
-        /* Insights Panel - Renamed from AI */
+        .badge-permanent {
+          background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(245, 158, 11, 0.08));
+          color: var(--warning);
+          border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        /* Insights Panel */
         .insights-panel {
           background: linear-gradient(135deg, var(--accent-subtle), var(--bg-tertiary));
           border: 1px solid var(--accent-border);
-          border-radius: 12px;
-          padding: 16px;
-          margin-bottom: 16px;
+          border-radius: 14px;
+          padding: 18px;
+          margin-bottom: 20px;
         }
 
         .insights-header {
           display: flex;
           align-items: center;
-          gap: 8px;
-          margin-bottom: 12px;
+          gap: 10px;
+          margin-bottom: 14px;
         }
 
         .insights-title {
-          font-size: 14px;
-          font-weight: 700;
+          font-size: 15px;
+          font-weight: 800;
           color: var(--text-primary);
         }
 
         .insights-list {
           display: flex;
           flex-direction: column;
-          gap: 8px;
+          gap: 10px;
         }
 
         .insight-item {
           display: flex;
           align-items: flex-start;
-          gap: 8px;
-          padding: 10px;
+          gap: 10px;
+          padding: 12px;
           background: var(--bg-secondary);
-          border-radius: 8px;
-          font-size: 12px;
+          border-radius: 10px;
+          font-size: 13px;
           line-height: 1.5;
           color: var(--text-secondary);
+          border: 1px solid var(--border-subtle);
         }
 
         .insight-icon {
-          font-size: 16px;
+          font-size: 18px;
           flex-shrink: 0;
         }
 
         .stat-card {
-          padding: 14px;
+          padding: 16px;
           background: var(--bg-elevated);
           border: 1px solid var(--border-subtle);
-          border-radius: 10px;
+          border-radius: 12px;
           transition: all var(--transition);
         }
 
         .stat-card:hover {
           background: var(--bg-hover);
           border-color: var(--border-default);
+          transform: translateY(-2px);
         }
 
         .stat-card-label {
           font-size: 11px;
-          font-weight: 600;
+          font-weight: 700;
           text-transform: uppercase;
           color: var(--text-tertiary);
-          margin-bottom: 6px;
+          margin-bottom: 8px;
         }
 
         .stat-card-value {
-          font-size: 24px;
-          font-weight: 800;
+          font-size: 26px;
+          font-weight: 900;
           color: var(--text-primary);
           margin-bottom: 4px;
         }
@@ -7278,6 +8288,7 @@
         .stat-card-meta {
           font-size: 12px;
           color: var(--text-secondary);
+          font-weight: 600;
         }
 
         .view-content {
@@ -7286,6 +8297,20 @@
 
         .view-content.active {
           display: block;
+        }
+
+        /* Total Commits Badge - Prominent */
+        .total-commits-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 12px;
+          background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(245, 158, 11, 0.08));
+          border: 1px solid rgba(245, 158, 11, 0.4);
+          border-radius: 8px;
+          font-size: 12px;
+          font-weight: 800;
+          color: var(--warning);
         }
 
         /* Animation delays */
@@ -7311,7 +8336,7 @@
               <div class="logo-icon">⚡</div>
               <div class="logo-text">
                 <h1>Performance Hub</h1>
-                <p>v7.0 Ultimate</p>
+                <p>v7.3 Line Charts Edition</p>
               </div>
             </div>
             <div class="sidebar-stats">
@@ -7371,7 +8396,7 @@
           <div class="sidebar-footer">
             <div class="status-indicator">
               <span class="status-dot"></span>
-              <span>Live • All-Time: <strong>${allTimeCommits}</strong></span>
+              <span>Live • All-Time: <strong>${allTimeCommits}</strong> commits</span>
             </div>
           </div>
         </aside>
@@ -7381,8 +8406,8 @@
             <h1 class="page-title" id="page-title-text">Overview</h1>
             <div class="top-actions">
               <div class="theme-toggle">
-                <div class="theme-option ${getTheme() === 'dark' ? 'active' : ''}" data-theme="dark">🌙 Dark</div>
-                <div class="theme-option ${getTheme() === 'light' ? 'active' : ''}" data-theme="light">☀️ Light</div>
+                <div class="theme-option ${theme === 'dark' ? 'active' : ''}" data-theme="dark">🌙 Dark</div>
+                <div class="theme-option ${theme === 'light' ? 'active' : ''}" data-theme="light">☀️ Light</div>
               </div>
               <button class="btn" id="progress-toggle-btn">
                 📊 Progress Bar: ${getProgressBarsEnabled() ? 'ON' : 'OFF'}
@@ -7395,11 +8420,11 @@
           <div class="content-area">
             <!-- OVERVIEW VIEW -->
             <div class="view-content active" id="view-overview">
-              <!-- SMART INSIGHTS PANEL (renamed from AI) -->
+              <!-- SMART INSIGHTS PANEL -->
               ${smartInsights.length > 0 ? `
                 <div class="insights-panel">
                   <div class="insights-header">
-                    <span style="font-size: 20px;">💡</span>
+                    <span style="font-size: 22px;">💡</span>
                     <div class="insights-title">Smart Insights</div>
                   </div>
                   <div class="insights-list">
@@ -7414,7 +8439,7 @@
               ` : ''}
 
               <!-- PRIMARY STATS -->
-              <div style="display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+              <div style="display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 20px; margin-bottom: 20px;">
                 <div class="hero-stat" style="--stat-color: var(--accent);">
                   <div class="hero-stat-header">
                     <span class="hero-stat-icon">⏱️</span>
@@ -7424,13 +8449,13 @@
                   <div class="hero-stat-value" id="hero-time-live">${fmt(committed)}</div>
                   <div class="hero-stat-meta">
                     <span>Target: ${customTargets.hours}h</span>
-                    <span style="color: var(--accent); font-weight: 700;">${goalPercent}%</span>
+                    <span style="color: var(--accent); font-weight: 800;">${goalPercent}%</span>
                   </div>
                   <div class="stat-progress">
                     <div class="stat-progress-fill" style="width: ${goalPercent}%;"></div>
                   </div>
                   ${yesterdayTime > 0 ? `
-                    <div style="margin-top: 8px; font-size: 10px; color: var(--text-tertiary);">
+                    <div style="margin-top: 10px; font-size: 10px; color: var(--text-tertiary);">
                       vs Yesterday:
                       <span class="comparison-badge ${committed > yesterdayTime ? 'positive' : committed < yesterdayTime ? 'negative' : 'neutral'}">
                         ${committed > yesterdayTime ? '↑' : committed < yesterdayTime ? '↓' : '='}
@@ -7445,17 +8470,17 @@
                     <span class="hero-stat-icon">📋</span>
                     <span class="hero-stat-trend">Today</span>
                   </div>
-                  <div class="hero-stat-label">Tasks</div>
+                  <div class="hero-stat-label">Tasks Committed</div>
                   <div class="hero-stat-value" id="hero-count-live">${count}</div>
                   <div class="hero-stat-meta">
                     <span>${customTargets.count ? `/${customTargets.count}` : 'Count'}</span>
-                    <span style="color: var(--success); font-weight: 700;">${countProgress}%</span>
+                    <span style="color: var(--success); font-weight: 800;">${countProgress}%</span>
                   </div>
                   <div class="stat-progress">
                     <div class="stat-progress-fill" style="width: ${countProgress}%; background: var(--success);"></div>
                   </div>
                   ${yesterdayCount > 0 ? `
-                    <div style="margin-top: 8px; font-size: 10px; color: var(--text-tertiary);">
+                    <div style="margin-top: 10px; font-size: 10px; color: var(--text-tertiary);">
                       vs Yesterday:
                       <span class="comparison-badge ${count > yesterdayCount ? 'positive' : count < yesterdayCount ? 'negative' : 'neutral'}">
                         ${count > yesterdayCount ? '↑' : count < yesterdayCount ? '↓' : '='}
@@ -7468,15 +8493,15 @@
                 <div class="hero-stat" style="--stat-color: var(--warning);">
                   <div class="hero-stat-header">
                     <span class="hero-stat-icon">🎯</span>
-                    <span class="hero-stat-trend">Total</span>
+                    <span class="hero-stat-trend">Permanent</span>
                   </div>
-                  <div class="hero-stat-label">Today Hits</div>
-                  <div class="hero-stat-value">${todayHits}</div>
+                  <div class="hero-stat-label">Total Commits Today</div>
+                  <div class="hero-stat-value">${permanentTotalCommits}</div>
                   <div class="hero-stat-meta">
-                    <span>All attempts</span>
+                    <span>Never resets manually</span>
                   </div>
-                  <div style="margin-top: 8px; font-size: 10px; color: var(--text-tertiary);">
-                    Success: ${todaySuccessRate}%
+                  <div style="margin-top: 10px; font-size: 10px; color: var(--text-tertiary);">
+                    Hits: ${permanentHits} • Resets at midnight
                   </div>
                 </div>
 
@@ -7491,7 +8516,7 @@
                     <span>${(avgTaskTime / 60).toFixed(1)} min</span>
                   </div>
                   ${peakHour.tasks > 0 ? `
-                    <div style="margin-top: 8px; font-size: 10px; color: var(--text-tertiary);">
+                    <div style="margin-top: 10px; font-size: 10px; color: var(--text-tertiary);">
                       Peak: ${fmt12Hour(peakHour.hour)}
                     </div>
                   ` : ''}
@@ -7500,20 +8525,20 @@
 
               <!-- BEST PERFORMANCE -->
               ${bestDay ? `
-                <div style="display: flex; gap: 12px; margin-bottom: 16px;">
-                  <div style="flex: 1; padding: 14px; background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 165, 0, 0.1)); border: 1px solid rgba(255, 215, 0, 0.3); border-radius: 10px; display: flex; align-items: center; gap: 12px;">
-                    <span style="font-size: 28px;">🏆</span>
+                <div style="display: flex; gap: 16px; margin-bottom: 20px;">
+                  <div style="flex: 1; padding: 16px; background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 165, 0, 0.1)); border: 1px solid rgba(255, 215, 0, 0.3); border-radius: 12px; display: flex; align-items: center; gap: 14px;">
+                    <span style="font-size: 32px;">🏆</span>
                     <div>
-                      <div style="font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase;">Best Day Ever</div>
-                      <div style="font-size: 15px; font-weight: 800; color: var(--text-primary); margin-top: 2px;">${bestDayFormatted}</div>
+                      <div style="font-size: 11px; font-weight: 700; color: var(--text-tertiary); text-transform: uppercase;">Best Day Ever</div>
+                      <div style="font-size: 16px; font-weight: 900; color: var(--text-primary); margin-top: 4px;">${bestDayFormatted}</div>
                     </div>
                   </div>
                   ${weekComparison != 0 ? `
-                    <div style="flex: 1; padding: 14px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: 10px; display: flex; align-items: center; gap: 12px;">
-                      <span style="font-size: 28px;">${parseFloat(weekComparison) > 0 ? '📈' : '📉'}</span>
+                    <div style="flex: 1; padding: 16px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: 12px; display: flex; align-items: center; gap: 14px;">
+                      <span style="font-size: 32px;">${parseFloat(weekComparison) > 0 ? '📈' : '📉'}</span>
                       <div>
-                        <div style="font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase;">This Week vs Last</div>
-                        <div style="font-size: 15px; font-weight: 800; color: ${parseFloat(weekComparison) > 0 ? 'var(--success)' : 'var(--danger)'}; margin-top: 2px;">
+                        <div style="font-size: 11px; font-weight: 700; color: var(--text-tertiary); text-transform: uppercase;">This Week vs Last</div>
+                        <div style="font-size: 16px; font-weight: 900; color: ${parseFloat(weekComparison) > 0 ? 'var(--success)' : 'var(--danger)'}; margin-top: 4px;">
                           ${parseFloat(weekComparison) > 0 ? '+' : ''}${weekComparison}%
                         </div>
                       </div>
@@ -7522,46 +8547,47 @@
                 </div>
               ` : ''}
 
-              <!-- WEEKLY & HOURLY -->
+              <!-- WEEKLY LINE CHART & HOURLY -->
               <div class="grid-2">
-                <!-- WEEKLY CHART -->
+                <!-- WEEKLY DUAL-AXIS LINE CHART -->
                 <div class="section">
                   <div class="section-header">
                     <div class="section-title">
-                      <span>📅</span>
-                      <span>Weekly Overview</span>
+                      <span>📈</span>
+                      <span>Weekly Trend</span>
                     </div>
-                    <div class="section-badge">${thisWeekTotal} tasks</div>
+                    <div class="section-badge">${thisWeekTotal} tasks • ${fmt(thisWeekTime).split(':').slice(0, 2).join(':')} time</div>
                   </div>
                   <div class="section-content">
-                    ${last7Days.some(d => d.count > 0) ? `
-                      <div style="display: flex; align-items: flex-end; justify-content: space-around; height: 160px; padding: 10px 0;">
-                        ${last7Days.map(day => {
-                          const maxCount = Math.max(...last7Days.map(d => d.count), 1);
-                          const heightPercent = (day.count / maxCount) * 100;
-                          return `
-                            <div style="display: flex; flex-direction: column; align-items: center; flex: 1;">
-                              <div style="font-size: 12px; font-weight: 800; color: var(--accent); margin-bottom: 4px;">${day.count}</div>
-                              <div style="width: 30px; height: ${Math.max(heightPercent, 5)}%; background: linear-gradient(180deg, #6366f1, #4f46e5); border-radius: 4px 4px 0 0; min-height: 4px; transition: all 0.3s;" title="${day.date}: ${day.count} tasks, ${fmt(day.time)}"></div>
-                              <div style="font-size: 10px; color: var(--text-tertiary); margin-top: 8px; font-weight: 600;">${day.dayName}</div>
-                            </div>
-                          `;
-                        }).join('')}
-                      </div>
-                      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 12px;">
-                        <div style="text-align: center; padding: 8px; background: var(--bg-tertiary); border-radius: 6px;">
-                          <div style="font-size: 18px; font-weight: 800; color: var(--accent);">${thisWeekTotal}</div>
-                          <div style="font-size: 10px; color: var(--text-tertiary); font-weight: 600;">Total Tasks</div>
+                    ${last7Days.some(d => d.count > 0 || d.time > 0) ? `
+                      <div class="line-chart-container" id="weekly-chart-container">
+                        ${weeklyLineChart}
+                        <div class="chart-tooltip" id="weekly-chart-tooltip">
+                          <div class="chart-tooltip-title"></div>
+                          <div class="chart-tooltip-row">
+                            <span class="chart-tooltip-label">Tasks:</span>
+                            <span class="chart-tooltip-value" style="color: #6366f1;"></span>
+                          </div>
+                          <div class="chart-tooltip-row">
+                            <span class="chart-tooltip-label">Time:</span>
+                            <span class="chart-tooltip-value" style="color: #10b981;"></span>
+                          </div>
                         </div>
-                        <div style="text-align: center; padding: 8px; background: var(--bg-tertiary); border-radius: 6px;">
-                          <div style="font-size: 18px; font-weight: 800; color: var(--success);">${fmt(last7Days.reduce((sum, d) => sum + d.time, 0)).split(':').slice(0,2).join(':')}</div>
-                          <div style="font-size: 10px; color: var(--text-tertiary); font-weight: 600;">Total Time</div>
+                      </div>
+                      <div class="chart-legend">
+                        <div class="legend-item">
+                          <div class="legend-color" style="background: #6366f1;"></div>
+                          <span class="legend-label">Tasks</span>
+                        </div>
+                        <div class="legend-item">
+                          <div class="legend-color" style="background: #10b981;"></div>
+                          <span class="legend-label">Time (hours)</span>
                         </div>
                       </div>
                     ` : `
-                      <div style="padding: 50px; text-align: center; color: var(--text-tertiary);">
-                        <div style="font-size: 48px; margin-bottom: 12px; opacity: 0.3;">📅</div>
-                        <div style="font-size: 14px; font-weight: 600;">No data this week</div>
+                      <div style="padding: 60px; text-align: center; color: var(--text-tertiary);">
+                        <div style="font-size: 56px; margin-bottom: 14px; opacity: 0.3;">📈</div>
+                        <div style="font-size: 15px; font-weight: 700;">No data this week</div>
                       </div>
                     `}
                   </div>
@@ -7578,68 +8604,83 @@
                   </div>
                   <div class="section-content">
                     ${activeHours.length > 0 ? `
-                      <div class="heatmap-container">
+                      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px;">
                         ${activeHours.map(h => {
                           const maxTasks = Math.max(...activeHours.map(d => d.tasks), 1);
                           const intensity = Math.min(4, Math.ceil((h.tasks / maxTasks) * 4));
+                          const bgColors = [
+                            'rgba(100, 116, 139, 0.1)',
+                            'rgba(59, 130, 246, 0.2)',
+                            'rgba(99, 102, 241, 0.35)',
+                            'rgba(139, 92, 246, 0.5)',
+                            'rgba(168, 85, 247, 0.7)'
+                          ];
                           return `
-                            <div class="heatmap-cell" data-intensity="${intensity}"
+                            <div style="padding: 14px; background: ${bgColors[intensity]}; border-radius: 12px; text-align: center; border: 1px solid var(--border-subtle); transition: all 0.3s; cursor: pointer;"
                                  title="${fmt12Hour(h.hour)}: ${h.tasks} tasks, ${fmt(h.time)}">
-                              <div class="heatmap-hour">${fmt12Hour(h.hour)}</div>
-                              <div class="heatmap-tasks">${h.tasks} tasks</div>
-                              <div class="heatmap-time">${fmt(h.time).split(':').slice(0,2).join(':')}</div>
+                              <div style="font-size: 14px; font-weight: 900; color: var(--text-primary);">${fmt12Hour(h.hour)}</div>
+                              <div style="font-size: 11px; font-weight: 700; color: var(--text-secondary); margin-top: 4px;">${h.tasks} tasks</div>
+                              <div style="font-size: 10px; font-weight: 600; color: var(--text-tertiary); margin-top: 2px;">${fmt(h.time).split(':').slice(0,2).join(':')}</div>
                             </div>
                           `;
                         }).join('')}
                       </div>
                     ` : `
-                      <div style="padding: 50px; text-align: center; color: var(--text-tertiary);">
-                        <div style="font-size: 48px; margin-bottom: 12px; opacity: 0.3;">🕐</div>
-                        <div style="font-size: 14px; font-weight: 600;">No activity today</div>
+                      <div style="padding: 60px; text-align: center; color: var(--text-tertiary);">
+                        <div style="font-size: 56px; margin-bottom: 14px; opacity: 0.3;">🕐</div>
+                        <div style="font-size: 15px; font-weight: 700;">No activity today</div>
                       </div>
                     `}
                   </div>
                 </div>
               </div>
 
-              <!-- TODAY'S TASKS TABLE -->
+              <!-- TODAY'S TASKS TABLE WITH PERMANENT COMMITS -->
               <div class="section">
                 <div class="section-header">
                   <div class="section-title">
                     <span>📋</span>
                     <span>Today's Tasks</span>
                   </div>
-                  <div class="section-badge">${sortedTasks.length} completed</div>
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <div class="total-commits-badge">
+                      <span>🎯</span>
+                      <span>Total Commits: ${permanentTotalCommits}</span>
+                    </div>
+                    <div class="section-badge">${sortedTasks.length} tasks</div>
+                  </div>
                 </div>
-                <div class="section-content" style="padding: 16px;">
+                <div class="section-content">
                   ${sortedTasks.length > 0 ? `
                     <div class="search-box">
                       <input type="text" class="search-input" id="task-search" placeholder="Search tasks...">
                       <span class="search-icon">🔍</span>
                     </div>
-                    <div style="overflow-x: auto; max-height: 400px; overflow-y: auto;">
+                    <div class="tasks-table-container">
                       <table class="tasks-table" id="tasks-table">
                         <thead>
                           <tr>
-                            <th class="sortable" data-sort="name" style="width: 40%;">Task Name</th>
-                            <th class="sortable" data-sort="time" style="width: 15%;">Time</th>
-                            <th class="sortable" data-sort="avgDuration" style="width: 15%;">Avg Duration</th>
-                            <th class="sortable" data-sort="successRate" style="width: 15%;">Success Rate</th>
-                            <th class="sortable" data-sort="commits" style="width: 15%; text-align: center;">Commits</th>
+                            <th class="sortable" data-sort="name" style="width: 35%;">Task Name (Full)</th>
+                            <th class="sortable" data-sort="permanentCommits" style="width: 13%; text-align: center;">Total Commits ⭐</th>
+                            <th class="sortable" data-sort="time" style="width: 13%;">Total Time</th>
+                            <th class="sortable" data-sort="avgDuration" style="width: 13%;">Avg Duration</th>
+                            <th class="sortable" data-sort="successRate" style="width: 13%;">Success Rate</th>
+                            <th class="sortable" data-sort="submitted" style="width: 13%; text-align: center;">Session Commits</th>
                           </tr>
                         </thead>
                         <tbody id="tasks-tbody">
                           ${sortedTasks.map(task => `
                             <tr data-task-name="${sanitizeHTML(task.taskName.toLowerCase())}">
                               <td>
-                                <div class="task-name" title="${sanitizeHTML(task.taskName)}" onclick="window.showFullTaskName('${sanitizeHTML(task.taskName).replace(/'/g, "\\'")}')">
-                                  ${sanitizeHTML(task.taskName.substring(0, 50))}${task.taskName.length > 50 ? '...' : ''}
-                                </div>
+                                <div class="task-name-full">${sanitizeHTML(task.taskName)}</div>
                               </td>
-                              <td style="font-weight: 600; color: var(--accent);" data-value="${task.totalTime}">${fmt(task.totalTime)}</td>
-                              <td style="font-weight: 600;" data-value="${task.avgDuration}">${fmt(task.avgDuration).split(':').slice(1).join(':')}</td>
+                              <td style="text-align: center;" data-value="${task.permanentCommits}">
+                                <span class="badge badge-permanent">🏆 ${task.permanentCommits}</span>
+                              </td>
+                              <td style="font-weight: 700; color: var(--accent);" data-value="${task.totalTime}">${fmt(task.totalTime)}</td>
+                              <td style="font-weight: 700;" data-value="${task.avgDuration}">${fmt(task.avgDuration).split(':').slice(1).join(':')}</td>
                               <td data-value="${task.successRate}">
-                                <span style="color: ${task.successRate >= 80 ? 'var(--success)' : task.successRate >= 50 ? 'var(--warning)' : 'var(--danger)'}; font-weight: 700;">
+                                <span style="color: ${task.successRate >= 80 ? 'var(--success)' : task.successRate >= 50 ? 'var(--warning)' : 'var(--danger)'}; font-weight: 800;">
                                   ${task.successRate}%
                                 </span>
                               </td>
@@ -7651,10 +8692,13 @@
                         </tbody>
                       </table>
                     </div>
+                    <div style="margin-top: 12px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; font-size: 11px; color: var(--text-tertiary);">
+                      <strong>💡 Note:</strong> "Total Commits" column shows permanent count that only resets at midnight, not affected by manual reset. "Session Commits" may differ after manual reset.
+                    </div>
                   ` : `
-                    <div style="padding: 50px; text-align: center; color: var(--text-tertiary);">
-                      <div style="font-size: 56px; margin-bottom: 14px; opacity: 0.3;">📋</div>
-                      <div style="font-size: 16px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px;">No tasks yet</div>
+                    <div style="padding: 60px; text-align: center; color: var(--text-tertiary);">
+                      <div style="font-size: 64px; margin-bottom: 16px; opacity: 0.3;">📋</div>
+                      <div style="font-size: 17px; font-weight: 800; color: var(--text-secondary); margin-bottom: 8px;">No tasks yet</div>
                       <div style="font-size: 13px;">Complete your first task to see it here</div>
                     </div>
                   `}
@@ -7664,93 +8708,65 @@
 
             <!-- ANALYTICS VIEW -->
             <div class="view-content" id="view-analytics">
-              <!-- 30-DAY BAR CHART -->
+              <!-- 30-DAY DUAL-AXIS LINE CHART -->
               <div class="section">
                 <div class="section-header">
                   <div class="section-title">
                     <span>📈</span>
-                    <span>30-Day Performance</span>
+                    <span>30-Day Performance Trend</span>
                   </div>
-                  <div class="section-badge">${last30Days.reduce((sum, d) => sum + d.count, 0)} total tasks</div>
+                  <div class="section-badge">${last30Days.reduce((sum, d) => sum + d.count, 0)} total tasks • ${fmt(last30Days.reduce((sum, d) => sum + d.time, 0)).split(':').slice(0,2).join(':')} total time</div>
                 </div>
                 <div class="section-content">
                   ${last30Days.some(d => d.count > 0 || d.time > 0) ? `
-                    <div class="bar-chart-container">
-                      <div class="chart-y-axis">
-                        <span class="y-axis-label">${max30DayCount}</span>
-                        <span class="y-axis-label">${Math.round(max30DayCount * 0.75)}</span>
-                        <span class="y-axis-label">${Math.round(max30DayCount * 0.5)}</span>
-                        <span class="y-axis-label">${Math.round(max30DayCount * 0.25)}</span>
-                        <span class="y-axis-label">0</span>
-                      </div>
-                      <div class="chart-grid-lines">
-                        <div class="grid-line"></div>
-                        <div class="grid-line"></div>
-                        <div class="grid-line"></div>
-                        <div class="grid-line"></div>
-                        <div class="grid-line"></div>
-                      </div>
-                      <div class="bar-chart" style="margin-left: 40px;">
-                        ${last30Days.map((day, idx) => {
-                          const taskHeight = max30DayCount > 0 ? (day.count / max30DayCount) * 100 : 0;
-                          const timeHeight = max30DayTime > 0 ? (day.time / max30DayTime) * 100 : 0;
-                          const showLabel = idx % 5 === 0 || idx === last30Days.length - 1;
-                          return `
-                            <div class="bar-wrapper" style="animation-delay: ${idx * 0.02}s;">
-                              <div class="bar-tooltip">
-                                <div class="bar-tooltip-title">${day.month} ${day.dayNum}</div>
-                                <div class="bar-tooltip-row">
-                                  <span>Tasks:</span>
-                                  <span class="bar-tooltip-value">${day.count}</span>
-                                </div>
-                                <div class="bar-tooltip-row">
-                                  <span>Time:</span>
-                                  <span class="bar-tooltip-value">${fmt(day.time)}</span>
-                                </div>
-                              </div>
-                              <div class="bar-group">
-                                <div class="bar tasks-bar" style="height: ${Math.max(taskHeight, 2)}%;"></div>
-                                <div class="bar time-bar" style="height: ${Math.max(timeHeight, 2)}%;"></div>
-                              </div>
-                              ${showLabel ? `<div class="bar-label">${day.dayNum}</div>` : '<div class="bar-label" style="visibility: hidden;">-</div>'}
-                            </div>
-                          `;
-                        }).join('')}
+                    <div class="line-chart-container" id="monthly-chart-container">
+                      ${monthlyLineChart}
+                      <div class="chart-tooltip" id="monthly-chart-tooltip">
+                        <div class="chart-tooltip-title"></div>
+                        <div class="chart-tooltip-row">
+                          <span class="chart-tooltip-label">Tasks:</span>
+                          <span class="chart-tooltip-value" style="color: #6366f1;"></span>
+                        </div>
+                        <div class="chart-tooltip-row">
+                          <span class="chart-tooltip-label">Time:</span>
+                          <span class="chart-tooltip-value" style="color: #10b981;"></span>
+                        </div>
                       </div>
                     </div>
                     <div class="chart-legend">
                       <div class="legend-item">
-                        <div class="legend-color tasks"></div>
-                        <span>Tasks</span>
+                        <div class="legend-color" style="background: #6366f1;"></div>
+                        <span class="legend-label">Tasks (Left Axis)</span>
                       </div>
                       <div class="legend-item">
-                        <div class="legend-color time"></div>
-                        <span>Time</span>
+                        <div class="legend-color" style="background: #10b981;"></div>
+                        <span class="legend-label">Time in Hours (Right Axis)</span>
                       </div>
                     </div>
-                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 20px;">
-                      <div style="text-align: center; padding: 12px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <div style="font-size: 22px; font-weight: 800; color: var(--accent);">${last30Days.reduce((sum, d) => sum + d.count, 0)}</div>
-                        <div style="font-size: 10px; color: var(--text-tertiary); font-weight: 600; text-transform: uppercase;">Total Tasks</div>
+                    <!-- Summary Stats -->
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px;">
+                      <div style="text-align: center; padding: 14px; background: var(--bg-tertiary); border-radius: 10px; border: 1px solid var(--border-subtle);">
+                        <div style="font-size: 24px; font-weight: 900; color: var(--accent);">${last30Days.reduce((sum, d) => sum + d.count, 0)}</div>
+                        <div style="font-size: 10px; color: var(--text-tertiary); font-weight: 700; text-transform: uppercase; margin-top: 4px;">Total Tasks</div>
                       </div>
-                      <div style="text-align: center; padding: 12px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <div style="font-size: 22px; font-weight: 800; color: var(--success);">${fmt(last30Days.reduce((sum, d) => sum + d.time, 0)).split(':').slice(0,2).join(':')}</div>
-                        <div style="font-size: 10px; color: var(--text-tertiary); font-weight: 600; text-transform: uppercase;">Total Time</div>
+                      <div style="text-align: center; padding: 14px; background: var(--bg-tertiary); border-radius: 10px; border: 1px solid var(--border-subtle);">
+                        <div style="font-size: 24px; font-weight: 900; color: var(--success);">${fmt(last30Days.reduce((sum, d) => sum + d.time, 0)).split(':').slice(0,2).join(':')}</div>
+                        <div style="font-size: 10px; color: var(--text-tertiary); font-weight: 700; text-transform: uppercase; margin-top: 4px;">Total Time</div>
                       </div>
-                      <div style="text-align: center; padding: 12px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <div style="font-size: 22px; font-weight: 800; color: var(--warning);">${Math.round(last30Days.reduce((sum, d) => sum + d.count, 0) / 30)}</div>
-                        <div style="font-size: 10px; color: var(--text-tertiary); font-weight: 600; text-transform: uppercase;">Daily Avg</div>
+                      <div style="text-align: center; padding: 14px; background: var(--bg-tertiary); border-radius: 10px; border: 1px solid var(--border-subtle);">
+                        <div style="font-size: 24px; font-weight: 900; color: var(--warning);">${Math.round(last30Days.reduce((sum, d) => sum + d.count, 0) / 30)}</div>
+                        <div style="font-size: 10px; color: var(--text-tertiary); font-weight: 700; text-transform: uppercase; margin-top: 4px;">Daily Avg Tasks</div>
                       </div>
-                      <div style="text-align: center; padding: 12px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <div style="font-size: 22px; font-weight: 800; color: #8b5cf6;">${last30Days.filter(d => d.count > 0).length}</div>
-                        <div style="font-size: 10px; color: var(--text-tertiary); font-weight: 600; text-transform: uppercase;">Active Days</div>
+                      <div style="text-align: center; padding: 14px; background: var(--bg-tertiary); border-radius: 10px; border: 1px solid var(--border-subtle);">
+                        <div style="font-size: 24px; font-weight: 900; color: #8b5cf6;">${last30Days.filter(d => d.count > 0).length}</div>
+                        <div style="font-size: 10px; color: var(--text-tertiary); font-weight: 700; text-transform: uppercase; margin-top: 4px;">Active Days</div>
                       </div>
                     </div>
                   ` : `
-                    <div style="padding: 80px; text-align: center; color: var(--text-tertiary);">
-                      <div style="font-size: 72px; margin-bottom: 16px; opacity: 0.3;">📈</div>
-                      <div style="font-size: 18px; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px;">No data yet</div>
-                      <div style="font-size: 13px;">Complete tasks to see your 30-day trend</div>
+                    <div style="padding: 100px; text-align: center; color: var(--text-tertiary);">
+                      <div style="font-size: 80px; margin-bottom: 20px; opacity: 0.3;">📈</div>
+                      <div style="font-size: 20px; font-weight: 800; color: var(--text-secondary); margin-bottom: 10px;">No data yet</div>
+                      <div style="font-size: 14px;">Complete tasks to see your 30-day trend</div>
                     </div>
                   `}
                 </div>
@@ -7767,12 +8783,12 @@
                 <div class="section-content">
                   <div class="grid-4">
                     <div class="stat-card">
-                      <div class="stat-card-label">Total Days</div>
+                      <div class="stat-card-label">Total Days Tracked</div>
                       <div class="stat-card-value">${totalDays}</div>
                       <div class="stat-card-meta">Since first use</div>
                     </div>
                     <div class="stat-card">
-                      <div class="stat-card-label">Total Time</div>
+                      <div class="stat-card-label">Total Time Worked</div>
                       <div class="stat-card-value">${fmt(totalAllTime).split(':').slice(0, 2).join(':')}</div>
                       <div class="stat-card-meta">${(totalAllTime / 3600).toFixed(1)} hours</div>
                     </div>
@@ -7790,32 +8806,32 @@
                 </div>
               </div>
 
-              <!-- Today's & Weekly Stats -->
+              <!-- Today's & All-Time Stats -->
               <div class="grid-2">
                 <div class="section">
                   <div class="section-header">
                     <div class="section-title">
                       <span>📅</span>
-                      <span>Today's Stats</span>
+                      <span>Today's Breakdown</span>
                     </div>
                   </div>
                   <div class="section-content">
-                    <div style="display: flex; flex-direction: column; gap: 10px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <span style="color: var(--text-secondary); font-size: 13px; font-weight: 600;">✅ Submitted</span>
-                        <span style="color: var(--success); font-weight: 800; font-size: 18px;">${todaySubmitted}</span>
+                    <div style="display: flex; flex-direction: column; gap: 12px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px; background: var(--bg-tertiary); border-radius: 10px; border: 1px solid var(--border-subtle);">
+                        <span style="color: var(--text-secondary); font-size: 14px; font-weight: 700;">✅ Submitted</span>
+                        <span style="color: var(--success); font-weight: 900; font-size: 20px;">${todaySubmitted}</span>
                       </div>
-                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <span style="color: var(--text-secondary); font-size: 13px; font-weight: 600;">⏭️ Skipped</span>
-                        <span style="color: var(--warning); font-weight: 800; font-size: 18px;">${todaySkipped}</span>
+                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px; background: var(--bg-tertiary); border-radius: 10px; border: 1px solid var(--border-subtle);">
+                        <span style="color: var(--text-secondary); font-size: 14px; font-weight: 700;">⏭️ Skipped</span>
+                        <span style="color: var(--warning); font-weight: 900; font-size: 20px;">${todaySkipped}</span>
                       </div>
-                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <span style="color: var(--text-secondary); font-size: 13px; font-weight: 600;">⏰ Expired</span>
-                        <span style="color: var(--danger); font-weight: 800; font-size: 18px;">${todayExpired}</span>
+                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px; background: var(--bg-tertiary); border-radius: 10px; border: 1px solid var(--border-subtle);">
+                        <span style="color: var(--text-secondary); font-size: 14px; font-weight: 700;">⏰ Expired</span>
+                        <span style="color: var(--danger); font-weight: 900; font-size: 20px;">${todayExpired}</span>
                       </div>
-                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <span style="color: var(--text-secondary); font-size: 13px; font-weight: 600;">📈 Success Rate</span>
-                        <span style="color: var(--accent); font-weight: 800; font-size: 18px;">${todaySuccessRate}%</span>
+                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px; background: linear-gradient(135deg, var(--accent-subtle), var(--bg-tertiary)); border-radius: 10px; border: 1px solid var(--accent-border);">
+                        <span style="color: var(--text-secondary); font-size: 14px; font-weight: 700;">📈 Success Rate</span>
+                        <span style="color: var(--accent); font-weight: 900; font-size: 20px;">${todaySuccessRate}%</span>
                       </div>
                     </div>
                   </div>
@@ -7829,22 +8845,22 @@
                     </div>
                   </div>
                   <div class="section-content">
-                    <div style="display: flex; flex-direction: column; gap: 10px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <span style="color: var(--text-secondary); font-size: 13px; font-weight: 600;">This Week Total</span>
-                        <span style="color: var(--success); font-weight: 800; font-size: 18px;">${thisWeekTotal}</span>
+                    <div style="display: flex; flex-direction: column; gap: 12px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px; background: var(--bg-tertiary); border-radius: 10px; border: 1px solid var(--border-subtle);">
+                        <span style="color: var(--text-secondary); font-size: 14px; font-weight: 700;">This Week Tasks</span>
+                        <span style="color: var(--success); font-weight: 900; font-size: 20px;">${thisWeekTotal}</span>
                       </div>
-                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <span style="color: var(--text-secondary); font-size: 13px; font-weight: 600;">Daily Average</span>
-                        <span style="color: var(--accent); font-weight: 800; font-size: 18px;">${Math.round(thisWeekTotal / 7)}</span>
+                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px; background: var(--bg-tertiary); border-radius: 10px; border: 1px solid var(--border-subtle);">
+                        <span style="color: var(--text-secondary); font-size: 14px; font-weight: 700;">This Week Time</span>
+                        <span style="color: var(--accent); font-weight: 900; font-size: 20px;">${fmt(thisWeekTime).split(':').slice(0,2).join(':')}</span>
                       </div>
-                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <span style="color: var(--text-secondary); font-size: 13px; font-weight: 600;">Total Sessions</span>
-                        <span style="color: var(--text-primary); font-weight: 800; font-size: 18px;">${sessions.length}</span>
+                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px; background: var(--bg-tertiary); border-radius: 10px; border: 1px solid var(--border-subtle);">
+                        <span style="color: var(--text-secondary); font-size: 14px; font-weight: 700;">Total Sessions</span>
+                        <span style="color: var(--text-primary); font-weight: 900; font-size: 20px;">${sessions.length}</span>
                       </div>
-                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: var(--bg-tertiary); border-radius: 8px;">
-                        <span style="color: var(--text-secondary); font-size: 13px; font-weight: 600;">All-Time Commits</span>
-                        <span style="color: var(--warning); font-weight: 800; font-size: 18px;">${allTimeCommits}</span>
+                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px; background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), var(--bg-tertiary)); border-radius: 10px; border: 1px solid rgba(245, 158, 11, 0.3);">
+                        <span style="color: var(--text-secondary); font-size: 14px; font-weight: 700;">All-Time Commits</span>
+                        <span style="color: var(--warning); font-weight: 900; font-size: 20px;">${allTimeCommits}</span>
                       </div>
                     </div>
                   </div>
@@ -7852,62 +8868,73 @@
               </div>
             </div>
 
-            <!-- TASKS VIEW -->
+            <!-- TASKS VIEW - FULL NAMES WITH PERMANENT COMMITS -->
             <div class="view-content" id="view-tasks">
               <div class="section">
                 <div class="section-header">
                   <div class="section-title">
                     <span>📋</span>
-                    <span>All Tasks</span>
+                    <span>All Tasks (Full Names)</span>
                   </div>
-                  <div class="section-badge">${sortedTasks.length} unique tasks</div>
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <div class="total-commits-badge">
+                      <span>🏆</span>
+                      <span>Total Commits: ${permanentTotalCommits}</span>
+                    </div>
+                    <div class="section-badge">${sortedTasks.length} unique tasks</div>
+                  </div>
                 </div>
-                <div class="section-content" style="padding: 16px;">
+                <div class="section-content">
                   ${sortedTasks.length > 0 ? `
                     <div class="search-box">
                       <input type="text" class="search-input" id="all-task-search" placeholder="Search all tasks...">
                       <span class="search-icon">🔍</span>
                     </div>
-                    <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                    <div class="tasks-table-container">
                       <table class="tasks-table" id="all-tasks-table">
                         <thead>
                           <tr>
-                            <th class="sortable" data-sort="name" style="width: 35%;">Task Name</th>
-                            <th class="sortable" data-sort="time" style="width: 13%;">Total Time</th>
-                            <th class="sortable" data-sort="avgDuration" style="width: 13%;">Avg Duration</th>
-                            <th class="sortable" data-sort="sessions" style="width: 13%;">Sessions</th>
-                            <th class="sortable" data-sort="successRate" style="width: 13%;">Success Rate</th>
-                            <th class="sortable" data-sort="commits" style="width: 13%; text-align: center;">Commits</th>
+                            <th class="sortable" data-sort="name" style="width: 30%;">Task Name (Full Queue Name)</th>
+                            <th class="sortable" data-sort="permanentCommits" style="width: 12%; text-align: center;">Total Commits ⭐</th>
+                            <th class="sortable" data-sort="time" style="width: 12%;">Total Time</th>
+                            <th class="sortable" data-sort="avgDuration" style="width: 12%;">Avg Duration</th>
+                            <th class="sortable" data-sort="sessions" style="width: 10%;">Sessions</th>
+                            <th class="sortable" data-sort="successRate" style="width: 12%;">Success Rate</th>
+                            <th class="sortable" data-sort="submitted" style="width: 12%; text-align: center;">Session Commits</th>
                           </tr>
                         </thead>
                         <tbody id="all-tasks-tbody">
                           ${sortedTasks.map(task => `
                             <tr data-task-name="${sanitizeHTML(task.taskName.toLowerCase())}">
                               <td>
-                                <div class="task-name" title="${sanitizeHTML(task.taskName)}" onclick="window.showFullTaskName('${sanitizeHTML(task.taskName).replace(/'/g, "\\'")}')">
-                                  ${sanitizeHTML(task.taskName.substring(0, 45))}${task.taskName.length > 45 ? '...' : ''}
-                                </div>
+                                <div class="task-name-full">${sanitizeHTML(task.taskName)}</div>
                               </td>
-                              <td style="font-weight: 700; color: var(--accent);" data-value="${task.totalTime}">${fmt(task.totalTime)}</td>
-                              <td style="font-weight: 600;" data-value="${task.avgDuration}">${fmt(task.avgDuration).split(':').slice(1).join(':')}</td>
-                              <td style="font-weight: 600;" data-value="${task.totalSessions}">${task.totalSessions}</td>
+                              <td style="text-align: center;" data-value="${task.permanentCommits}">
+                                <span class="badge badge-permanent">🏆 ${task.permanentCommits}</span>
+                              </td>
+                              <td style="font-weight: 800; color: var(--accent);" data-value="${task.totalTime}">${fmt(task.totalTime)}</td>
+                              <td style="font-weight: 700;" data-value="${task.avgDuration}">${fmt(task.avgDuration).split(':').slice(1).join(':')}</td>
+                              <td style="font-weight: 700;" data-value="${task.totalSessions}">${task.totalSessions}</td>
                               <td data-value="${task.successRate}">
-                                <span style="color: ${task.successRate >= 80 ? 'var(--success)' : task.successRate >= 50 ? 'var(--warning)' : 'var(--danger)'}; font-weight: 700;">
+                                <span style="color: ${task.successRate >= 80 ? 'var(--success)' : task.successRate >= 50 ? 'var(--warning)' : 'var(--danger)'}; font-weight: 800;">
                                   ${task.successRate}%
                                 </span>
                               </td>
                               <td style="text-align: center;" data-value="${task.submitted}">
-                                                                <span class="badge badge-success">✓ ${task.submitted}</span>
+                                <span class="badge badge-success">✓ ${task.submitted}</span>
                               </td>
                             </tr>
                           `).join('')}
                         </tbody>
                       </table>
                     </div>
+                    <div style="margin-top: 12px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; font-size: 11px; color: var(--text-tertiary);">
+                      <strong>💡 Note:</strong> "Total Commits" (⭐) is a permanent counter that only resets at midnight. It is NOT affected by manual reset. This gives you accurate daily totals even if you reset during the day.
+                    </div>
                   ` : `
-                    <div style="padding: 70px; text-align: center; color: var(--text-tertiary);">
-                      <div style="font-size: 72px; margin-bottom: 16px; opacity: 0.3;">📋</div>
-                      <div style="font-size: 18px; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px;">No tasks yet</div>
+                    <div style="padding: 80px; text-align: center; color: var(--text-tertiary);">
+                      <div style="font-size: 80px; margin-bottom: 20px; opacity: 0.3;">📋</div>
+                      <div style="font-size: 20px; font-weight: 800; color: var(--text-secondary); margin-bottom: 10px;">No tasks yet</div>
                       <div style="font-size: 14px;">Complete your first task to see it here</div>
                     </div>
                   `}
@@ -7922,149 +8949,68 @@
     document.body.appendChild(root);
 
     // ============================================================================
-    // 🎯 FULL TASK NAME MODAL
-    // ============================================================================
-    window.showFullTaskName = function(fullName) {
-      const existing = document.getElementById('task-name-modal');
-      if (existing) existing.remove();
-
-      const modal = document.createElement('div');
-      modal.id = 'task-name-modal';
-      modal.innerHTML = `
-        <style>
-          #task-name-modal {
-            position: fixed;
-            inset: 0;
-            z-index: 999999999;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(0, 0, 0, 0.8);
-            backdrop-filter: blur(10px);
-            animation: fadeIn 0.2s ease;
-          }
-          .task-name-modal-content {
-            background: var(--bg-primary);
-            border: 2px solid var(--accent);
-            border-radius: 16px;
-            padding: 24px;
-            max-width: 600px;
-            width: 90%;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-            animation: slideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-          }
-          .task-name-modal-header {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 16px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid var(--border-subtle);
-          }
-          .task-name-modal-title {
-            font-size: 16px;
-            font-weight: 700;
-            color: var(--text-primary);
-          }
-          .task-name-modal-body {
-            font-size: 14px;
-            color: var(--text-secondary);
-            line-height: 1.6;
-            max-height: 400px;
-            overflow-y: auto;
-            padding: 12px;
-            background: var(--bg-tertiary);
-            border-radius: 8px;
-            word-wrap: break-word;
-          }
-          .task-name-modal-body::-webkit-scrollbar {
-            width: 6px;
-          }
-          .task-name-modal-body::-webkit-scrollbar-thumb {
-            background: var(--accent);
-            border-radius: 3px;
-          }
-          .task-name-modal-footer {
-            margin-top: 16px;
-            display: flex;
-            gap: 8px;
-            justify-content: flex-end;
-          }
-          .task-name-modal-btn {
-            padding: 8px 16px;
-            border: none;
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-          }
-          .task-name-modal-btn-copy {
-            background: var(--accent);
-            color: white;
-          }
-          .task-name-modal-btn-copy:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-          }
-          .task-name-modal-btn-close {
-            background: var(--bg-elevated);
-            color: var(--text-secondary);
-          }
-          .task-name-modal-btn-close:hover {
-            background: var(--bg-hover);
-            color: var(--text-primary);
-          }
-        </style>
-        <div class="task-name-modal-content">
-          <div class="task-name-modal-header">
-            <span style="font-size: 24px;">📋</span>
-            <div class="task-name-modal-title">Full Task Name</div>
-          </div>
-          <div class="task-name-modal-body">${fullName}</div>
-          <div class="task-name-modal-footer">
-            <button class="task-name-modal-btn task-name-modal-btn-copy" onclick="window.copyTaskName('${fullName.replace(/'/g, "\\'")}')">
-              📋 Copy
-            </button>
-            <button class="task-name-modal-btn task-name-modal-btn-close" onclick="document.getElementById('task-name-modal').remove()">
-              Close
-            </button>
-          </div>
-        </div>
-      `;
-
-      document.body.appendChild(modal);
-
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-          modal.remove();
-        }
-      });
-    };
-
-    window.copyTaskName = function(text) {
-      navigator.clipboard.writeText(text).then(() => {
-        const btn = document.querySelector('.task-name-modal-btn-copy');
-        if (btn) {
-          const originalText = btn.textContent;
-          btn.textContent = '✅ Copied!';
-          btn.style.background = 'var(--success)';
-          setTimeout(() => {
-            btn.textContent = originalText;
-            btn.style.background = 'var(--accent)';
-          }, 2000);
-        }
-      });
-    };
-
-    // ============================================================================
     // 🎯 DASHBOARD EVENT HANDLERS
     // ============================================================================
 
+    // Setup chart tooltip interactions
+    function setupChartTooltips(containerId, tooltipId, chartData) {
+      const container = root.querySelector(`#${containerId}`);
+      const tooltip = root.querySelector(`#${tooltipId}`);
+      if (!container || !tooltip) return;
+
+      const dots = container.querySelectorAll('.chart-dot');
+      dots.forEach((dot, index) => {
+        dot.addEventListener('mouseenter', (e) => {
+          const dataIndex = parseInt(dot.getAttribute('data-index'));
+          const data = chartData[dataIndex];
+          if (!data) return;
+
+          tooltip.querySelector('.chart-tooltip-title').textContent = data.label;
+          tooltip.querySelectorAll('.chart-tooltip-value')[0].textContent = data.value1;
+          tooltip.querySelectorAll('.chart-tooltip-value')[1].textContent = data.value2.toFixed(2) + 'h';
+
+          const rect = dot.getBoundingClientRect();
+          const containerRect = container.getBoundingClientRect();
+
+          tooltip.style.left = (rect.left - containerRect.left + rect.width / 2 - 60) + 'px';
+          tooltip.style.top = (rect.top - containerRect.top - 80) + 'px';
+          tooltip.classList.add('visible');
+        });
+
+        dot.addEventListener('mouseleave', () => {
+          tooltip.classList.remove('visible');
+        });
+      });
+    }
+
+    // Setup tooltips for both charts
+    if (last7Days.some(d => d.count > 0 || d.time > 0)) {
+      setupChartTooltips('weekly-chart-container', 'weekly-chart-tooltip', weeklyChartData);
+    }
+    if (last30Days.some(d => d.count > 0 || d.time > 0)) {
+      setupChartTooltips('monthly-chart-container', 'monthly-chart-tooltip', monthlyChartData);
+    }
+
     // Live update function
     function updateLiveData() {
-      const currentCommitted = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
-      const currentCount = retrieveNumber(KEYS.COUNT, 0);
+      let currentCommitted, currentCount;
+
+      // Read directly during/after reset
+      if (forceResetActive || resetInProgress) {
+        try {
+          const rawCommitted = localStorage.getItem(KEYS.DAILY_COMMITTED);
+          const rawCount = localStorage.getItem(KEYS.COUNT);
+          currentCommitted = rawCommitted ? parseInt(rawCommitted) : 0;
+          currentCount = rawCount ? parseInt(rawCount) : 0;
+        } catch (e) {
+          currentCommitted = 0;
+          currentCount = 0;
+        }
+      } else {
+        currentCommitted = retrieveNumber(KEYS.DAILY_COMMITTED, 0);
+        currentCount = retrieveNumber(KEYS.COUNT, 0);
+      }
+
       const timeStr = fmt(currentCommitted);
 
       const sidebarTime = document.getElementById('sidebar-time-live');
@@ -8084,11 +9030,12 @@
     // Theme toggle
     root.querySelectorAll('.theme-option').forEach(option => {
       option.addEventListener('click', function() {
-        const theme = this.getAttribute('data-theme');
+        const newTheme = this.getAttribute('data-theme');
         root.querySelectorAll('.theme-option').forEach(opt => opt.classList.remove('active'));
         this.classList.add('active');
-        setTheme(theme);
-        log(`🎨 Theme changed to: ${theme}`);
+        ThemeManager.setTheme(newTheme);
+        root.setAttribute('data-theme', newTheme);
+        log(`🎨 Theme changed to: ${newTheme}`);
       });
     });
 
@@ -8154,18 +9101,28 @@
               const aCells = a.querySelectorAll('td');
               const bCells = b.querySelectorAll('td');
 
+              // Find the cell with the matching data-value attribute
               for (let i = 0; i < aCells.length; i++) {
                 if (aCells[i].hasAttribute('data-value')) {
-                  aVal = parseFloat(aCells[i].getAttribute('data-value')) || 0;
-                  break;
+                  const cellSort = headers[i]?.getAttribute('data-sort');
+                  if (cellSort === sortKey) {
+                    aVal = parseFloat(aCells[i].getAttribute('data-value')) || 0;
+                    break;
+                  }
                 }
               }
               for (let i = 0; i < bCells.length; i++) {
                 if (bCells[i].hasAttribute('data-value')) {
-                  bVal = parseFloat(bCells[i].getAttribute('data-value')) || 0;
-                  break;
+                  const cellSort = headers[i]?.getAttribute('data-sort');
+                  if (cellSort === sortKey) {
+                    bVal = parseFloat(bCells[i].getAttribute('data-value')) || 0;
+                    break;
+                  }
                 }
               }
+
+              aVal = aVal || 0;
+              bVal = bVal || 0;
 
               return currentSort.direction === 'asc' ? aVal - bVal : bVal - aVal;
             }
@@ -8265,7 +9222,7 @@
     };
     document.addEventListener('keydown', escHandler);
 
-    log("✅ Dashboard v7.0 rendered successfully!");
+    log("✅ Dashboard v7.3 with Dual-Axis Line Charts rendered successfully!");
   }
 
   // ============================================================================
@@ -8274,6 +9231,10 @@
   let lastAWSData = null;
 
   function trackOnce() {
+    if (forceResetActive || resetInProgress || isResetting || manualResetJustHappened) {
+      return;
+    }
+
     try {
       checkDailyReset();
 
@@ -8382,7 +9343,8 @@
             daily_committed: retrieveNumber(KEYS.DAILY_COMMITTED, 0),
             count: retrieveNumber(KEYS.COUNT, 0),
             total_commits_alltime: retrieveNumber(KEYS.TOTAL_COMMITS_ALLTIME, 0),
-            total_today_hits: getTodayHits(),
+            permanent_daily_hits: getPermanentDailyHits(),
+            permanent_task_commits: retrieve(KEYS.PERMANENT_TASK_COMMITS, {}),
             delay_stats: DelayAccumulator.dailyStats,
             reminder_settings: ReminderSystem.settings,
             reminder_stats: ReminderSystem.stats
@@ -8437,16 +9399,16 @@
   // 🚀 INITIALIZATION
   // ============================================================================
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("🚀 SageMaker ULTIMATE v7.0 - 100% ACCURACY EDITION");
+  console.log("🚀 SageMaker ULTIMATE v7.3 - DUAL-AXIS LINE CHARTS");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("✨ KEY FIXES IN v7.0:");
-  console.log("  • 🎯 100% Task Name Accuracy (MutationObserver + Retry)");
-  console.log("  • 💡 'Smart Insights' (renamed from AI Insights)");
-  console.log("  • 🔄 Manual Reset FULLY FIXED (Force Clear)");
-  console.log("  • 📊 30-Day Bar Graph (Elegant Design)");
-  console.log("  • 📊 Progress Bar Toggle Shows 'Progress Bar: ON/OFF'");
-  console.log("  • 🛡️ Startup Data Validation");
-  console.log("  • 🔍 Smart Task Type Detection");
+  console.log("✨ KEY FEATURES IN v7.3:");
+  console.log("  • 📈 Dual-Axis Line Charts (Tasks & Time)");
+  console.log("  • 🏆 Permanent Task Commits Counter");
+  console.log("  • 🔄 PERFECT Manual Reset (100% Working)");
+  console.log("  • 📋 Full Task Names (No Truncation)");
+  console.log("  • 🎯 Total Commits in Tasks Table");
+  console.log("  • 🛡️ Smart Engine Reset Protection");
+  console.log("  • 🎨 Theme Sync Across All Popups");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
   checkDailyReset();
@@ -8455,11 +9417,14 @@
   setupAutoBackup();
   MultiTabSync.setupStorageListener();
 
+  // Clear manual reset tracker for new day on startup
+  ManualResetTracker.clearForNewDay();
+
   setTimeout(() => {
     restoreActiveTask();
     updateDisplay();
     updateHomeDisplay();
-    attachToFooter();
+    tryAttachToFooter();
 
     currentPageState = null;
     updateDisplayVisibilitySafe();
@@ -8496,22 +9461,26 @@
   buttonsObserver.observe(document.body, { childList: true, subtree: true });
 
   console.log("");
-  console.log("✅ ULTIMATE v7.0 - FULLY READY!");
+  console.log("✅ ULTIMATE v7.3 - FULLY READY!");
   console.log("🎉 Created by PVSANKAR");
-  console.log("⚡ 100% Task Name Accuracy: GUARANTEED");
-  console.log("📊 Professional Dashboard: ACTIVE");
-  console.log("🔄 Manual Reset: FIXED");
+  console.log("📈 Charts: DUAL-AXIS LINE CHARTS");
+  console.log("🔄 Manual Reset: PERFECT (Smart Engine Bypass)");
+  console.log("📋 Full Task Names: YES");
+  console.log("🏆 Permanent Task Commits: ENABLED");
+  console.log("🎯 Total Commits in Table: YES");
   console.log("");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   console.log("📊 CURRENT STATUS:");
   console.log("  Daily Committed: " + fmt(retrieveNumber(KEYS.DAILY_COMMITTED, 0)));
   console.log("  Task Count: " + retrieveNumber(KEYS.COUNT, 0));
-  console.log("  Today Hits: " + getTodayHits());
+  console.log("  Permanent Hits: " + getPermanentDailyHits());
+  console.log("  Permanent Commits: " + PermanentTaskCommits.getTotalCommits());
   console.log("  All-Time Commits: " + retrieveNumber(KEYS.TOTAL_COMMITS_ALLTIME, 0));
+  console.log("  Theme: " + ThemeManager.getTheme().toUpperCase());
   console.log("  Reminders: " + (ReminderSystem.settings.enabled ? "✅ ENABLED" : "🔴 DISABLED"));
+  console.log("  Manual Reset Today: " + (ManualResetTracker.wasResetToday() ? "YES" : "NO"));
   console.log("  Multi-Tab Sync: ✅ ACTIVE");
-  console.log("  Smart Engine: ✅ RUNNING");
-  console.log("  Task Name Detection: ✅ 100% ACCURACY");
+  console.log("  Smart Engine: ✅ RUNNING (Reset Protected)");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   console.log("");
   console.log("⌨️ KEYBOARD SHORTCUTS:");
@@ -8523,7 +9492,7 @@
   console.log("  Ctrl+Shift+P - Easter Egg");
   console.log("");
   console.log("═══════════════════════════════════════════════════");
-  console.log("   🚀 v7.0 ULTIMATE - 100% ACCURACY READY! 🚀   ");
+  console.log("   🚀 v7.3 ULTIMATE - DUAL-AXIS LINE CHARTS READY! 🚀   ");
   console.log("═══════════════════════════════════════════════════");
 
 })();
