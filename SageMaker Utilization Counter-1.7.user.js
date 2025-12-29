@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sagemaker Utilization Counter
 // @namespace    http://tampermonkey.net/
-// @version      7
+// @version      8
 // @description  Dashboard - Optimized for 8+ Hour Sessions
 // @author       PVSANKAR
 // @match        *://*.sagemaker.aws/*
